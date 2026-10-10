@@ -67,7 +67,8 @@ export function guard(fn: (req: Request) => Promise<Response>) {
 }
 
 export function need(name: string): string {
-  const v = process.env[name];
+  // Pasted keys sometimes carry spaces, quotes or a line break.
+  const v = (process.env[name] || '').trim().replace(/^["']|["']$/g, '');
   if (!v) throw new HttpError(503, `${name} is not set in your Vercel project settings.`);
   return v;
 }
