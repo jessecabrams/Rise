@@ -3,7 +3,8 @@ import { Icon, Segmented } from './ui';
 import { setSettings, useApp } from '../lib/store';
 import { deviceVoices, onVoicesChanged, player, say } from '../lib/speech';
 import { api, useServer } from '../lib/api';
-import { NATURAL_VOICES, useNatural } from '../lib/localtts';
+import { NATURAL_VOICES, isIOS, useNatural } from '../lib/localtts';
+import { AppleVoicesHelp } from './AppleVoices';
 import { go } from '../lib/nav';
 import type { Provider } from '../lib/types';
 
@@ -44,7 +45,11 @@ export function VoicePicker() {
   let list: V[] = [];
   let current = '';
   if (s.provider === 'device') {
-    list = device.map((v) => ({ id: v.name, name: v.name.replace(/\s*\(.*\)$/, ''), desc: v.lang + (/(premium|enhanced|natural|neural)/i.test(v.name) ? ' · high quality' : '') }));
+    list = device.map((v) => {
+      const q = `${v.name} ${v.voiceURI}`;
+      const tier = /premium/i.test(q) ? ' · Premium' : /enhanced/i.test(q) ? ' · Enhanced' : /(natural|neural)/i.test(q) ? ' · high quality' : '';
+      return { id: v.name, name: v.name.replace(/\s*\((premium|enhanced)\)$/i, ''), desc: v.lang + tier };
+    });
     current = s.deviceVoice || list[0]?.id || '';
   } else if (s.provider === 'neural') {
     list = NATURAL_VOICES;
@@ -84,6 +89,7 @@ export function VoicePicker() {
         {s.provider === 'elevenlabs' && 'The most lifelike voices, with exact word timing. Uses your ElevenLabs credits.'}
         {!(ready && srv.features.openai) && s.provider === 'device' && ' Studio and Premium voices switch on once their keys are added to your Rise server.'}
       </p>
+      {s.provider === 'device' && isIOS() && !list.some((v) => /Premium|Enhanced/.test(v.desc || '')) && list.length > 0 && <AppleVoicesHelp />}
 
       {s.provider === 'openai' && (
         <label className="field" htmlFor="voice-style">

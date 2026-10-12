@@ -122,8 +122,6 @@ export interface Chapter {
   chars: number;
 }
 
-const MIN_BODY = 200;
-const MAX_CHAPTER = 24000;
 const PART = 12000;
 
 /** Splits a run of sentences into parts of about `size` characters. */
@@ -142,61 +140,114 @@ function bySize(sentences: string[], start: number, end: number, size: number): 
   return out;
 }
 
-const chapterCache = new Map<Structured, Chapter[]>();
+export interface HeadingInfo {
+  start: number; // sentence index of the heading
+  title: string;
+  level: number;
+  chars: number; // body text until the next heading of any level
+}
 
-/** Finds the chapters in the material from its headings, falling back to even parts for long unstructured text. */
-export function chapters(s: Structured, docTitle = ''): Chapter[] {
-  const hit = chapterCache.get(s);
-  if (hit) return hit;
-  const raw: { title: string; start: number; chars: number }[] = [];
-  let cur = { title: '', start: 0, chars: 0 };
+/** Every heading in the material, in order, with how much text sits under it. */
+export function headings(s: Structured): HeadingInfo[] {
+  const out: HeadingInfo[] = [];
   for (const p of s.paras) {
-    if (p.heading) {
+    if (p.heading) out.push({ start: p.start, title: p.sentences.join(' ').replace(/\s+/g, ' ').trim(), level: p.heading, chars: 0 });
+    else if (out.length) out[out.length - 1].chars += p.sentences.reduce((a, x) => a + x.length + 1, 0);
+  }
+  return out;
+}
+
+const NUM = '([0-9]+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|twenty[- ]\\w+|thirty)';
+const CHAPTER_RE = new RegExp(`^(chapter|ch\\.?)\\s*${NUM}\\b`, 'i');
+const PART_RE = new RegExp(`^(part|book)\\s+${NUM}\\b`, 'i');
+const MATTER_RE = /^(prologue|epilogue|introduction|conclusion|preface|foreword|afterword|appendix|acknowledg|notes|bibliography|index)\b/i;
+
+/** Picks which headings start a chapter: real "Chapter N" headings when present, otherwise the top heading level. */
+function chapterStarts(hs: HeadingInfo[]): Set<number> {
+  const chapterWord = hs.filter((h) => CHAPTER_RE.test(h.title));
+  if (chapterWord.length >= 2) {
+    return new Set(hs.filter((h) => CHAPTER_RE.test(h.title) || PART_RE.test(h.title) || MATTER_RE.test(h.title)).map((h) => h.start));
+  }
+  const levels = [...new Set(hs.map((h) => h.level))].sort((a, b) => a - b);
+  for (const L of levels) {
+    const top = hs.filter((h) => h.level <= L);
+    if (top.length >= 2) return new Set(top.map((h) => h.start));
+  }
+  return new Set(hs.map((h) => h.start));
+}
+
+const chapterCache = new WeakMap<Structured, Map<string, Chapter[]>>();
+
+/**
+ * Finds the big chapters in the material. Subheadings stay inside their chapter.
+ * `override` is a hand-picked list of heading positions that start chapters.
+ */
+export function chapters(s: Structured, docTitle = '', override?: number[] | null): Chapter[] {
+  const key = override?.length ? override.join(',') : 'auto';
+  let byKey = chapterCache.get(s);
+  const hit = byKey?.get(key);
+  if (hit) return hit;
+
+  const hs = headings(s);
+  const totalChars = s.sentences.reduce((a, x) => a + x.length + 1, 0);
+  const manual = !!override?.length;
+  const starts = manual ? new Set(override) : chapterStarts(hs);
+  // In long books, a "chapter" with almost no text is a divider like "Part One": fold it into the next.
+  const minBody = manual ? 0 : Math.min(3000, Math.max(200, totalChars / 120));
+
+  const raw: { title: string; start: number; chars: number; strong: boolean }[] = [];
+  let cur = { title: '', start: 0, chars: 0, strong: false };
+  for (const p of s.paras) {
+    const isStart = p.heading && starts.has(p.start);
+    if (isStart) {
       const t = p.sentences.join(' ');
-      if (cur.chars < MIN_BODY) {
-        cur.title = t; // a heading with little or no text under it folds into the next one
+      const strong = CHAPTER_RE.test(t);
+      if (cur.chars <= minBody && (cur.chars > 0 || cur.title) && raw.length + 1 > 0 && (cur.chars === 0 || !manual)) {
+        // Too little text so far: merge into this chapter. Prefer a real "Chapter N" title.
+        if (cur.chars === 0 || !cur.title || (strong && !cur.strong)) {
+          cur.title = t;
+          cur.strong = strong;
+        }
       } else {
-        raw.push(cur);
-        cur = { title: t, start: p.start, chars: 0 };
+        if (cur.chars > 0 || cur.title) raw.push(cur);
+        cur = { title: t, start: p.start, chars: 0, strong };
       }
-    } else {
+    } else if (!p.heading || !starts.has(p.start)) {
       cur.chars += p.sentences.reduce((a, x) => a + x.length + 1, 0);
     }
   }
   raw.push(cur);
+  const list = raw.filter((r, i) => i === 0 || r.start > raw[i - 1].start);
 
   const total = s.sentences.length;
-  const plain = raw.length === 1 || raw.length > 120;
   let spans: { title: string; start: number; end: number }[];
-  if (plain) {
-    const whole = s.sentences.reduce((a, x) => a + x.length + 1, 0);
+  if (list.length <= 1) {
     spans =
-      whole > 15000
+      totalChars > 15000 && !hs.length
         ? bySize(s.sentences, 0, total, PART).map(([a, b], i) => ({ title: `Part ${i + 1}: “${s.sentences[a].split(/\s+/).slice(0, 5).join(' ')}…”`, start: a, end: b }))
-        : [{ title: raw[0].title && raw.length === 1 ? raw[0].title : 'Whole piece', start: 0, end: total }];
+        : [{ title: list[0]?.title || 'Whole piece', start: 0, end: total }];
   } else {
-    spans = [];
-    raw.forEach((r, i) => {
-      const end = i + 1 < raw.length ? raw[i + 1].start : total;
-      if (r.chars > MAX_CHAPTER) {
-        const parts = bySize(s.sentences, r.start, end, PART);
-        parts.forEach(([a, b], k) => spans.push({ title: `${r.title || 'Untitled'} (part ${k + 1} of ${parts.length})`, start: a, end: b }));
-      } else spans.push({ title: r.title, start: r.start, end });
-    });
+    spans = list.map((r, i) => ({ title: r.title, start: i === 0 ? 0 : r.start, end: i + 1 < list.length ? list[i + 1].start : total }));
   }
 
   const clean = (t: string) => t.replace(/\s+/g, ' ').trim();
   const out = spans
     .filter((x) => x.end > x.start)
-    .map((x, index) => {
+    .map((x, index, arr) => {
       let title = clean(x.title);
-      if (!title || (index === 0 && spans.length > 1 && docTitle && title.toLowerCase() === docTitle.toLowerCase())) title = index === 0 && spans.length > 1 ? 'Introduction' : title || 'Whole piece';
+      if (!title || (index === 0 && arr.length > 1 && docTitle && title.toLowerCase() === docTitle.toLowerCase())) title = index === 0 && arr.length > 1 ? 'Introduction' : title || 'Whole piece';
       const chars = s.sentences.slice(x.start, x.end).reduce((a, y) => a + y.length + 1, 0);
       const short = title.length > 40 ? title.slice(0, 38).replace(/\s+\S*$/, '') + '…' : title;
-      return { index, title, label: spans.length > 1 ? `Ch ${index + 1} · ${short}` : short, start: x.start, end: x.end, chars };
+      return { index, title, label: arr.length > 1 ? `Ch ${index + 1} · ${short}` : short, start: x.start, end: x.end, chars };
     });
-  chapterCache.set(s, out);
+  if (!byKey) chapterCache.set(s, (byKey = new Map()));
+  byKey.set(key, out);
   return out;
+}
+
+/** Which chapter a sentence belongs to. */
+export function chapterAt(chs: Chapter[], sentence: number): Chapter | undefined {
+  return chs.find((c) => sentence >= c.start && sentence < c.end) || chs[chs.length - 1];
 }
 
 export function sectionText(sentences: string[], c: { start: number; end: number }): string {

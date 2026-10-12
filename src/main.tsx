@@ -1,3 +1,4 @@
+import { startUpdates } from './lib/update';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
@@ -19,5 +20,5 @@ const embedded = (() => {
   }
 })();
 if (!embedded && 'serviceWorker' in navigator && import.meta.env.PROD && import.meta.env.MODE !== 'preview') {
-  import('virtual:pwa-register').then(({ registerSW }) => registerSW({ immediate: true })).catch(() => {});
+  startUpdates();
 }

@@ -23,6 +23,8 @@ export interface DocMeta {
   mastered?: number;
   /** Offline download status. */
   offline?: { at: number; chapters: number; audio?: string; audioAt?: number };
+  /** Hand-picked chapter starts (sentence indexes of headings). Empty means automatic. */
+  chapterStarts?: number[];
   pending?: number;
 }
 

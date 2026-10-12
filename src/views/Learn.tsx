@@ -5,7 +5,7 @@ import { isOfflineError, runAi } from '../lib/ai';
 import { queueReview } from '../lib/review';
 import { award } from '../lib/game';
 import { say } from '../lib/speech';
-import { chapters, sectionText, uid } from '../lib/text';
+import { sectionText, uid } from '../lib/text';
 import { ideasFromList, saveChapterMap, starState, strength } from '../lib/mastery';
 import { useApp } from '../lib/store';
 import { go } from '../lib/nav';
@@ -25,7 +25,7 @@ const TYPE_LABEL: Record<string, string> = {
 const BUILD_LINES = ['Reading closely…', 'Finding the big idea…', 'Writing flashcards…', 'Designing exercises just for this…', 'Almost there…'];
 
 export function Learn({ ctx }: { ctx: DocCtx }) {
-  const secs = useMemo(() => chapters(ctx.s, ctx.title), [ctx.s, ctx.title]);
+  const secs = ctx.chs;
   const [secIndex, setSecIndex] = useState(() => Math.min(ctx.body.lessons[ctx.body.lessons.length - 1]?.sectionIndex ?? 0, secs.length - 1));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');

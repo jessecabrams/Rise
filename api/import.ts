@@ -11,7 +11,8 @@ function blocksToText(html: string): string {
   for (const el of blocks) {
     if (el.querySelector && el.querySelector('p,li') && el.tagName !== 'LI') continue;
     const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
-    if (t) out.push(/^H[1-3]$/.test(el.tagName) ? `# ${t}` : t);
+    const h = String(el.tagName).match(/^H([1-3])$/);
+    if (t) out.push(h ? `${'#'.repeat(Number(h[1]))} ${t}` : t);
   }
   return out.join('\n\n');
 }

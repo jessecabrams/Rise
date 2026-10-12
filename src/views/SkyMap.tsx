@@ -3,7 +3,7 @@ import { ErrorNote, Horizon, Icon, ScoreRing, Sheet } from '../components/ui';
 import { patchDoc, useApp } from '../lib/store';
 import { go } from '../lib/nav';
 import { player, say } from '../lib/speech';
-import { chapters, type Chapter } from '../lib/text';
+import { type Chapter } from '../lib/text';
 import { buildIdeas, chapterStats, daysUntilFade, docStats, isFading, LIT, starState, strength, type StarState } from '../lib/mastery';
 import type { ChapterMap, DocMeta, IdeaNode } from '../lib/types';
 import type { DocCtx } from './Doc';
@@ -98,7 +98,7 @@ type Sel = { ch: number; idea?: string } | null;
 /* ---------- the map ---------- */
 export function SkyMap({ ctx }: { ctx: DocCtx }) {
   const meta = useApp((s) => s.docs[ctx.id]);
-  const chs = useMemo(() => chapters(ctx.s, ctx.title), [ctx.s, ctx.title]);
+  const chs = ctx.chs;
   const map = ctx.body.map || {};
   const wide = useWide();
   const [sel, setSel] = useState<Sel>(null);

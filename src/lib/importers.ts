@@ -19,7 +19,7 @@ export async function importFile(file: File): Promise<Imported> {
   if (['txt', 'md', 'markdown', 'text'].includes(ext) || file.type.startsWith('text/plain')) {
     const raw = await file.text();
     const text = raw
-      .replace(/^(#{1,3})\s+(.+)$/gm, '\n\n# $2\n\n')
+      .replace(/^(#{1,3})\s+(.+)$/gm, '\n\n$1 $2\n\n')
       .replace(/^#{4,6}\s+/gm, '')
       .replace(/[*_`>]{1,3}/g, '');
     return { title: stem(file.name), text, source: 'text' };
@@ -38,7 +38,8 @@ function blocks(root: Element | null): string {
     if (el.tagName !== 'LI' && el.querySelector('p,li')) return;
     const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
     if (!t) return;
-    out.push(/^H[1-3]$/.test(el.tagName) ? `# ${t}` : t);
+    const h = el.tagName.match(/^H([1-3])$/);
+    out.push(h ? `${'#'.repeat(Number(h[1]))} ${t}` : t);
   });
   if (!out.length) out.push((root.textContent || '').trim());
   return out.join('\n\n');
@@ -77,7 +78,7 @@ async function importPdf(file: File): Promise<Imported> {
     if (!l || /^\d+$/.test(l)) continue; // blank lines and page numbers
     const head = body > 0 && h >= body * 1.18 && l.length < 90 && !/[,;]$/.test(l);
     if (head) {
-      text = text.replace(/\s+$/, '') + (inHead ? ' ' : '\n\n# ') + l;
+      text = text.replace(/\s+$/, '') + (inHead ? ' ' : h >= body * 1.5 ? '\n\n# ' : '\n\n## ') + l;
       inHead = true;
       continue;
     }
@@ -124,8 +125,24 @@ async function importEpub(file: File): Promise<Imported> {
     const doc = new DOMParser().parseFromString(await f.async('string'), 'text/html');
     let t = blocks(doc.body);
     if (!t.trim()) continue;
-    // Each ebook file is usually a chapter. Give it a heading if it has none.
-    if (!/^# /.test(t) && t.length > 1500) {
+    // Each ebook file is usually one chapter. Its first heading becomes the chapter title;
+    // every other heading inside it is a section. Short files (cover, copyright) never start chapters.
+    const lines = t.split('\n\n');
+    const long = t.length > 1500;
+    let first = true;
+    t = lines
+      .map((l) => {
+        const m = l.match(/^(#{1,3}) (.*)$/);
+        if (!m) return l;
+        if (!long) return `### ${m[2]}`;
+        if (first) {
+          first = false;
+          return `# ${m[2]}`;
+        }
+        return `${'#'.repeat(Math.min(3, m[1].length + 1))} ${m[2]}`;
+      })
+      .join('\n\n');
+    if (first && long) {
       const own = (doc.title || '').trim();
       t = `# ${own && own !== title ? own : `Section ${parts.length + 1}`}\n\n${t}`;
     }

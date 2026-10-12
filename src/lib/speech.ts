@@ -15,11 +15,15 @@ interface StoredClip {
 }
 
 /* ---------- device voices ---------- */
+/** Apple's joke voices. They only clutter the list. */
+const NOVELTY = /^(albert|bad news|bahh|bells|boing|bubbles|cellos|good news|jester|organ|superstar|trinoids|whisper|wobble|zarvox|junior|ralph|fred|kathy|grandma|grandpa|eddy|flo|reed|rocko|sandy|shelley|deranged|hysterical|pipe organ)$/i;
 export function deviceVoices(): SpeechSynthesisVoice[] {
   if (typeof speechSynthesis === 'undefined') return [];
-  const all = speechSynthesis.getVoices().filter((v) => v.lang.toLowerCase().startsWith('en'));
+  const all = speechSynthesis
+    .getVoices()
+    .filter((v) => v.lang.toLowerCase().startsWith('en') && !NOVELTY.test(v.name.replace(/\s*\(.*\)$/, '')));
   const score = (v: SpeechSynthesisVoice) =>
-    (/(premium|enhanced|natural|neural)/i.test(v.name) ? 4 : 0) +
+    (/premium/i.test(v.name + ' ' + v.voiceURI) ? 6 : /(enhanced|natural|neural)/i.test(v.name + ' ' + v.voiceURI) ? 4 : 0) +
     (/(siri|google|samantha|ava|zoe|evan|nathan|allison|aria|jenny|guy)/i.test(v.name) ? 2 : 0) +
     (v.lang === 'en-US' ? 1 : 0);
   return all.sort((a, b) => score(b) - score(a) || a.name.localeCompare(b.name));

@@ -1,6 +1,6 @@
 import { del as idbDel, get as idbGet, set as idbSet } from 'idb-keyval';
 import type { QuizQuestion } from './types';
-import { chapters, sectionText, uid } from './text';
+import { sectionText, uid } from './text';
 import { buildIdeas, type MapCtx } from './mastery';
 import { runAi } from './ai';
 import { patchDoc } from './store';
@@ -105,7 +105,7 @@ export interface PrepProgress {
 /** Builds everything a piece needs offline: idea map, question bank, search index and optional voice audio. */
 export async function prepareOffline(ctx: MapCtx, opts: PrepOptions, onProgress: (p: PrepProgress) => void, cancel: { current: boolean }) {
   if (!isOnline()) throw new Error('Downloading for offline needs a connection. Try again when you have signal.');
-  const chs = chapters(ctx.s, ctx.title);
+  const chs = ctx.chs;
   const audioWeight = opts.audio ? 0.4 : 0;
   const aiWeight = (1 - audioWeight) * 0.9;
   const steps = chs.length * 2;

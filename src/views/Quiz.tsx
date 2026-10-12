@@ -9,7 +9,7 @@ import { isOnline, useOnline } from '../lib/online';
 import { answerXp, award } from '../lib/game';
 import { say, stopSay } from '../lib/speech';
 import { patchDoc, setSettings, useApp } from '../lib/store';
-import { chapters, sectionText, uid } from '../lib/text';
+import { sectionText, uid, type Chapter } from '../lib/text';
 import { buildIdeas, chapterStats, docStats, recordIdea, reviewPicks, type IdeaDelta } from '../lib/mastery';
 import { go } from '../lib/nav';
 import type { ChapterMap, Grade, IdeaNode, QuizFocus, QuizQuestion, Settings } from '../lib/types';
@@ -37,7 +37,7 @@ export function Quiz({ ctx, focus }: { ctx: DocCtx; focus?: QuizFocus }) {
   const st = useApp((s) => s.settings);
   const meta = useApp((s) => s.docs[ctx.id]);
   useOnline();
-  const chs = useMemo(() => chapters(ctx.s, ctx.title), [ctx.s, ctx.title]);
+  const chs = ctx.chs;
   const [pick, setPick] = useState<QuizFocus>(focus || { mode: 'chapter', chapter: 0 });
   const [scope, setScope] = useState<QuizFocus>(pick);
   const [phase, setPhase] = useState<Phase>('setup');
@@ -478,7 +478,7 @@ function QuizSetup({
 }: {
   ctx: DocCtx;
   st: Settings;
-  chs: ReturnType<typeof chapters>;
+  chs: Chapter[];
   pick: QuizFocus;
   setPick: (f: QuizFocus) => void;
   onStart: () => void;

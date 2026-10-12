@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ErrorNote, Icon, Sheet } from '../components/ui';
 import { DocOffline } from './OfflinePanel';
 import { getBody, patchDoc, saveBody, useApp } from '../lib/store';
 import { go, type DocTab } from '../lib/nav';
-import { structure, type Structured } from '../lib/text';
+import { chapterAt, chapters, structure } from '../lib/text';
+import { ChaptersPanel } from '../components/Chapters';
+import { usePlayer } from '../lib/speech';
 import type { DocBody, QuizFocus } from '../lib/types';
-import type { MapCtx } from '../lib/mastery';
+import { reconcileChapters, type MapCtx } from '../lib/mastery';
 import { Reader } from './Reader';
 import { Learn } from './Learn';
 import { Quiz } from './Quiz';
@@ -33,6 +35,8 @@ export function Doc({ id, tab, focus, nonce }: { id: string; tab: DocTab; focus?
   const [error, setError] = useState('');
   const [renaming, setRenaming] = useState(false);
   const [offlineOpen, setOfflineOpen] = useState(false);
+  const [chaptersOpen, setChaptersOpen] = useState(false);
+  const p = usePlayer();
 
   // Reload when background work (like coach reviews of offline answers) changes this piece.
   useEffect(() => {
@@ -69,6 +73,18 @@ export function Doc({ id, tab, focus, nonce }: { id: string; tab: DocTab; focus?
     };
   }, [id]);
 
+  const text = body?.text;
+  const s = useMemo(() => (text != null ? structure(text, id) : null), [text, id]);
+  const startsKey = meta?.chapterStarts?.join(',') || '';
+  const chs = useMemo(() => (s ? chapters(s, meta?.title || '', meta?.chapterStarts) : []), [s, meta?.title, startsKey]);
+  const ctxRef = useRef<DocCtx | null>(null);
+  const chKey = chs.map((c) => `${c.start}:${c.title}`).join('|');
+  const loaded = !!body;
+  // Keep saved maps, questions and guides attached to the right chapter when the chapter list changes.
+  useEffect(() => {
+    if (loaded && ctxRef.current) reconcileChapters(ctxRef.current);
+  }, [chKey, loaded]);
+
   if (!meta) {
     return (
       <div className="page">
@@ -89,9 +105,11 @@ export function Doc({ id, tab, focus, nonce }: { id: string; tab: DocTab; focus?
     if (next.lessons.length !== meta.lessonCount) patchDoc(id, (d) => (d.lessonCount = next.lessons.length));
   };
 
-  const s: Structured | null = body ? structure(body.text, id) : null;
   const ctx: DocCtx | null =
-    body && s ? { id, title: meta.title, body, s, bodyRef: bodyRef as { current: DocBody }, update, setBody: (b) => update(() => b) } : null;
+    body && s ? { id, title: meta.title, body, s, chs, bodyRef: bodyRef as { current: DocBody }, update, setBody: (b) => update(() => b) } : null;
+  ctxRef.current = ctx;
+  const at = p.docId === id ? p.index : meta.position || 0;
+  const curCh = chs.length > 1 ? chapterAt(chs, at) : undefined;
 
   return (
     <div className="page doc-page">
@@ -117,6 +135,14 @@ export function Doc({ id, tab, focus, nonce }: { id: string; tab: DocTab; focus?
             {meta.title}
           </h1>
         )}
+        {curCh && (
+          <button className="pill ch-pill" onClick={() => setChaptersOpen(true)} aria-label={`Chapters. Now in chapter ${curCh.index + 1} of ${chs.length}`} title="Chapters">
+            <Icon name="list" size={18} />
+            <span className="tabular">
+              {curCh.index + 1}/{chs.length}
+            </span>
+          </button>
+        )}
         <button className={`icon-btn ${meta.offline ? 'is-offline' : ''}`} onClick={() => setOfflineOpen(true)} aria-label={meta.offline ? 'Downloaded for offline' : 'Download for offline'} title={meta.offline ? 'Downloaded for offline' : 'Download for offline'}>
           <Icon name={meta.offline ? 'check' : 'download'} size={18} />
         </button>
@@ -124,6 +150,9 @@ export function Doc({ id, tab, focus, nonce }: { id: string; tab: DocTab; focus?
           <Icon name="edit" size={18} />
         </button>
       </header>
+      <Sheet open={chaptersOpen} onClose={() => setChaptersOpen(false)} title="Chapters">
+        {ctx && <ChaptersPanel id={id} title={meta.title} s={ctx.s} chs={chs} onClose={() => setChaptersOpen(false)} />}
+      </Sheet>
       <Sheet open={offlineOpen} onClose={() => setOfflineOpen(false)} title="Use offline">
         {ctx ? <DocOffline ctx={ctx} /> : <p className="hint">Loading…</p>}
       </Sheet>
@@ -139,7 +168,7 @@ export function Doc({ id, tab, focus, nonce }: { id: string; tab: DocTab; focus?
       {!body && !error && <div className="loading-lines" aria-label="Loading" />}
       {ctx && (
         <div className="doc-body">
-          {tab === 'listen' && <Reader id={id} title={meta.title} s={ctx.s} />}
+          {tab === 'listen' && <Reader id={id} title={meta.title} s={ctx.s} chs={chs} onChapters={() => setChaptersOpen(true)} />}
           {tab === 'learn' && <Learn ctx={ctx} />}
           {tab === 'map' && <SkyMap ctx={ctx} />}
           {tab === 'quiz' && <Quiz key={nonce || 0} ctx={ctx} focus={focus} />}

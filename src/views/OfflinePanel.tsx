@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { ErrorNote, Horizon, Icon, Toggle } from '../components/ui';
-import { chapters } from '../lib/text';
 import { hasIndex, prepareOffline, removeIndex, type PrepProgress } from '../lib/offline';
 import { audioEstimateMB, removeAudio, sayChunks, voiceKey } from '../lib/speech';
 import { ANSWER_PACK_MB, downloadAnswerPack, packReady, removeAnswerPack, usePack } from '../lib/localml';
 import { COACH_MODELS, downloadCoach, removeCoach, useCoach, webgpuSupported } from '../lib/localllm';
-import { NATURAL_MB, downloadNatural, removeNatural, useNatural } from '../lib/localtts';
+import { NATURAL_MB, downloadNatural, isIOS, removeNatural, stopNatural, useNatural } from '../lib/localtts';
 import { setSettings } from '../lib/store';
+import { AppleVoicesHelp } from '../components/AppleVoices';
 import { fmtBytes, keepStorage, storageUsage, useOnline } from '../lib/online';
 import { patchDoc, useApp } from '../lib/store';
 import { go } from '../lib/nav';
@@ -18,7 +18,7 @@ export function DocOffline({ ctx }: { ctx: DocCtx }) {
   const online = useOnline();
   const pack = usePack();
   const natural = useNatural();
-  const chs = chapters(ctx.s, ctx.title);
+  const chs = ctx.chs;
   const mapped = chs.filter((c) => ctx.body.map?.[c.index]).length;
   const banked = chs.filter((c) => ctx.body.bank?.[c.index]?.length).length;
   const questions = Object.values(ctx.body.bank || {}).reduce((a, l) => a + l.length, 0);
@@ -178,17 +178,23 @@ export function OfflineSettings() {
         {natural.status === 'downloading' && <Horizon pct={natural.pct} label="Natural voice download" />}
         {natural.stage && <p className="hint">{natural.stage}</p>}
         {natural.status === 'error' && <ErrorNote message={natural.error} />}
+        {isIOS() && natural.status !== 'ready' && <AppleVoicesHelp />}
         <div className="row gap wrap">
+          {natural.status === 'downloading' && (
+            <button className="btn btn-ghost sm" onClick={stopNatural}>
+              Stop
+            </button>
+          )}
           {natural.status !== 'ready' && (
             <button
-              className="btn btn-sun"
+              className={isIOS() ? 'btn btn-ghost' : 'btn btn-sun'}
               disabled={!online || natural.status === 'downloading'}
               onClick={async () => {
                 await keepStorage();
                 downloadNatural();
               }}
             >
-              <Icon name="download" size={18} /> {natural.status === 'downloading' ? `Downloading ${Math.round(natural.pct * 100)}%` : 'Download'}
+              <Icon name="download" size={18} /> {natural.status === 'downloading' ? `Downloading ${Math.round(natural.pct * 100)}%` : isIOS() ? 'Try it anyway' : 'Download'}
             </button>
           )}
           {natural.status === 'ready' && (
@@ -280,3 +286,4 @@ export function OfflineSettings() {
     </div>
   );
 }
+

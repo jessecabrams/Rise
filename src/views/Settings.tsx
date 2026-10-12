@@ -6,6 +6,7 @@ import { exportAll, importAll, pull, resetProgress, setSettings, useApp, useSync
 import { server, setKey, useServer } from '../lib/api';
 import { installPrompt } from '../lib/install';
 import { OfflineSettings } from './OfflinePanel';
+import { BUILD, updateNow } from '../lib/update';
 
 export function SettingsView() {
   const st = useApp((s) => s.settings);
@@ -115,6 +116,10 @@ export function SettingsView() {
       <section className="card stack">
         <h2>Install Rise</h2>
         <InstallHelp />
+        <div className="row between gap wrap">
+          <span className="hint tabular">Version {BUILD}</span>
+          <UpdateButton />
+        </div>
       </section>
 
       <section className="card stack">
@@ -266,5 +271,21 @@ function InstallHelp() {
         </li>
       </ul>
     </div>
+  );
+}
+
+function UpdateButton() {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      className="btn btn-ghost sm"
+      disabled={busy}
+      onClick={() => {
+        setBusy(true);
+        updateNow();
+      }}
+    >
+      <Icon name="refresh" size={16} /> {busy ? 'Updating…' : 'Update now'}
+    </button>
   );
 }

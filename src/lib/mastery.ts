@@ -93,6 +93,8 @@ export interface MapCtx {
   id: string;
   title: string;
   s: Structured;
+  /** The big chapters, honoring any hand-picked chapter starts. */
+  chs: Chapter[];
   bodyRef: { current: DocBody };
   update: (fn: (b: DocBody) => DocBody) => void;
 }
@@ -215,4 +217,72 @@ export function reviewPicks(meta: DocMeta | undefined, body: DocBody, max = 5): 
   const out: IdeaNode[] = [];
   for (const i of [...fading, ...weak, ...fresh]) if (out.length < max && !out.includes(i)) out.push(i);
   return out;
+}
+
+const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+/**
+ * When the chapter list changes (better detection, or chapters picked by hand), moves saved idea maps,
+ * offline questions and learning guides to the chapter with the same title. Anything that no longer matches is dropped.
+ */
+export function reconcileChapters(ctx: MapCtx) {
+  const b = ctx.bodyRef.current;
+  const chs = ctx.chs;
+  const byTitle = new Map<string, number>();
+  chs.forEach((c) => !byTitle.has(norm(c.title)) && byTitle.set(norm(c.title), c.index));
+  const target = (oldIndex: number, title: string): number | undefined => {
+    if (chs[oldIndex] && norm(chs[oldIndex].title) === norm(title)) return oldIndex;
+    return byTitle.get(norm(title));
+  };
+
+  const move = new Map<number, number | undefined>();
+  let changed = false;
+  for (const [k, cm] of Object.entries(b.map || {})) {
+    const to = target(Number(k), cm.title);
+    move.set(Number(k), to);
+    if (to !== Number(k)) changed = true;
+  }
+  const lessonMoves = b.lessons.map((l) => target(l.sectionIndex, l.sectionLabel));
+  if (lessonMoves.some((to, i) => to !== b.lessons[i].sectionIndex)) changed = true;
+  for (const k of Object.keys(b.bank || {})) if (!move.has(Number(k)) || move.get(Number(k)) !== Number(k)) changed = true;
+  const meta = getState().docs[ctx.id];
+  if (!changed) {
+    if (meta && meta.chapterTotal !== chs.length) patchDoc(ctx.id, (d) => (d.chapterTotal = chs.length));
+    return;
+  }
+
+  const map: Record<string, ChapterMap> = {};
+  const bank: DocBody['bank'] = {};
+  const dropped = new Set<string>();
+  for (const [k, cm] of Object.entries(b.map || {})) {
+    const to = move.get(Number(k));
+    if (to === undefined || map[to]) {
+      cm.ideas.forEach((i) => dropped.add(i.id));
+      continue;
+    }
+    map[to] = { ...cm, index: to, title: chs[to].title };
+    if (b.bank?.[k]?.length) bank[to] = b.bank[k];
+  }
+  const seen = new Set<number>();
+  const lessons = b.lessons
+    .map((l, i) => ({ l, to: lessonMoves[i] }))
+    .filter(({ to }) => to !== undefined && !seen.has(to) && (seen.add(to), true))
+    .map(({ l, to }) => ({ ...l, sectionIndex: to!, sectionLabel: chs[to!].title }));
+
+  ctx.update((x) => ({ ...x, map, bank, lessons }));
+  const maps = Object.values(map);
+  patchDoc(ctx.id, (d) => {
+    for (const id of dropped) if (d.ideas) delete d.ideas[id];
+    for (const [k, cm] of Object.entries(map)) for (const i of cm.ideas) if (d.ideas?.[i.id]) d.ideas[i.id].ch = Number(k);
+    const risen: Record<string, number> = {};
+    for (const [k, at] of Object.entries(d.risen || {})) {
+      const to = move.get(Number(k));
+      if (to !== undefined && map[to]) risen[to] = at;
+    }
+    d.risen = risen;
+    d.chapterTotal = chs.length;
+    d.ideaTotal = maps.reduce((a, m) => a + m.ideas.length, 0);
+    d.mappedChapters = maps.length;
+    d.lessonCount = lessons.length;
+  });
 }

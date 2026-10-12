@@ -141,7 +141,7 @@ export async function downloadNatural() {
     await cacheVoices((n) => set({ pct: 0.86 + (n / NATURAL_VOICES.length) * 0.08 }));
     set({ pct: 0.95, stage: 'Testing it on this device…' });
     const started = performance.now();
-    await withTimeout(call<Blob>({ type: 'speak', text: 'Ready.', voice: 'af_heart' }), 90_000, SLOW);
+    await withTimeout(call<Blob>({ type: 'speak', text: 'Ready.', voice: 'af_heart' }), 60_000, SLOW);
     const ms = performance.now() - started;
     try {
       localStorage.setItem(FLAG, '1');
@@ -151,12 +151,22 @@ export async function downloadNatural() {
     set({ status: 'ready', pct: 1, stage: ms > 20_000 ? 'Works, but slowly on this device. Each sentence may take a few seconds to start.' : '' });
   } catch (e: any) {
     const msg = e?.message || '';
+    if (msg === 'Stopped.') return;
     set({
       status: 'error',
       stage: '',
       error: /fetch|network|Load failed/i.test(msg) ? 'The download needs a connection. Try again when you have signal.' : msg === SLOW ? SLOW : msg || 'The Natural voice could not load on this device.'
     });
   }
+}
+
+/** True on iPhone and iPad, where the Natural voice is usually too heavy to run. */
+export const isIOS = () => typeof navigator !== 'undefined' && (/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+
+/** Stops a download or test that is taking too long. */
+export function stopNatural() {
+  resetWorker('Stopped.');
+  set({ status: 'none', pct: 0, error: '', stage: '' });
 }
 
 export async function removeNatural() {

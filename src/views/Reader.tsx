@@ -1,10 +1,9 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { chapters } from '../lib/text';
 import { Icon, Sheet } from '../components/ui';
 import { player, usePlayer } from '../lib/speech';
 import { setSettings, useApp } from '../lib/store';
 import { go } from '../lib/nav';
-import { minutesFor, type Para, type Structured } from '../lib/text';
+import { chapterAt, minutesFor, type Chapter, type Para, type Structured } from '../lib/text';
 import { SpeedControl, VoicePicker } from '../components/VoicePicker';
 
 interface ParaProps {
@@ -41,12 +40,11 @@ const Paragraph = memo(function Paragraph({ para, active, word, onPick }: ParaPr
   );
 });
 
-export function Reader({ id, title, s }: { id: string; title: string; s: Structured }) {
+export function Reader({ id, title, s, chs, onChapters }: { id: string; title: string; s: Structured; chs: Chapter[]; onChapters: () => void }) {
   const p = usePlayer();
   const meta = useApp((st) => st.docs[id]);
   const st = useApp((x) => x.settings);
-  const [sheet, setSheet] = useState<'voice' | 'speed' | 'text' | 'chapters' | null>(null);
-  const chs = useMemo(() => chapters(s, title), [s, title]);
+  const [sheet, setSheet] = useState<'voice' | 'speed' | 'text' | null>(null);
   const box = useRef<HTMLDivElement>(null);
   const mine = p.docId === id;
   const index = mine ? p.index : meta?.position || 0;
@@ -102,9 +100,9 @@ export function Reader({ id, title, s }: { id: string; title: string; s: Structu
         <span className="hint tabular">{minutesFor(remaining, st.rate)} min left</span>
         <div className="grow" />
         {chs.length > 1 && (
-          <button className="pill" onClick={() => setSheet('chapters')} aria-label="Chapters">
+          <button className="pill" onClick={onChapters} aria-label="Chapters">
             <Icon name="list" size={18} />
-            <span className="tabular">Ch {(chs.find((c) => index >= c.start && index < c.end)?.index ?? 0) + 1}</span>
+            <span className="tabular">Ch {(chapterAt(chs, index)?.index ?? 0) + 1}</span>
           </button>
         )}
         <button className="pill" onClick={() => setSheet('speed')} aria-label="Speed">
@@ -170,36 +168,6 @@ export function Reader({ id, title, s }: { id: string; title: string; s: Structu
       </Sheet>
       <Sheet open={sheet === 'speed'} onClose={() => setSheet(null)} title="Speed">
         <SpeedControl />
-      </Sheet>
-      <Sheet open={sheet === 'chapters'} onClose={() => setSheet(null)} title="Chapters">
-        <ul className="chapter-list">
-          {chs.map((c) => {
-            const now = index >= c.start && index < c.end;
-            return (
-              <li key={c.index} className={now ? 'now' : ''}>
-                <button
-                  className="chapter-row"
-                  onClick={() => {
-                    setSheet(null);
-                    pick(c.start);
-                  }}
-                >
-                  <span className="cp-num tabular">{c.index + 1}</span>
-                  <span className="grow">
-                    <strong>{c.title}</strong>
-                    <small className="hint tabular">
-                      {minutesFor(Math.round(c.chars / 5.5), st.rate)} min{now ? ' · reading now' : ''}
-                    </small>
-                  </span>
-                  <Icon name="play" size={16} />
-                </button>
-                <button className="icon-btn" aria-label={`Quiz chapter ${c.index + 1}`} title="Quiz this chapter" onClick={() => go({ name: 'doc', id, tab: 'quiz', focus: { mode: 'chapter', chapter: c.index } })}>
-                  <Icon name="target" size={18} />
-                </button>
-              </li>
-            );
-          })}
-        </ul>
       </Sheet>
       <Sheet open={sheet === 'text'} onClose={() => setSheet(null)} title="Reading view">
         <TextSettings />
