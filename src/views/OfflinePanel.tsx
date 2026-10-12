@@ -176,6 +176,7 @@ export function OfflineSettings() {
           {natural.status === 'ready' && <span className="ready-tag">Ready</span>}
         </div>
         {natural.status === 'downloading' && <Horizon pct={natural.pct} label="Natural voice download" />}
+        {natural.stage && <p className="hint">{natural.stage}</p>}
         {natural.status === 'error' && <ErrorNote message={natural.error} />}
         <div className="row gap wrap">
           {natural.status !== 'ready' && (

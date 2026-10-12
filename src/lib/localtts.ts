@@ -18,6 +18,7 @@ export interface NaturalState {
   status: 'none' | 'downloading' | 'ready' | 'error';
   pct: number;
   error: string;
+  stage: string;
 }
 
 function readFlag() {
@@ -28,7 +29,7 @@ function readFlag() {
   }
 }
 
-let state: NaturalState = { status: readFlag() ? 'ready' : 'none', pct: 0, error: '' };
+let state: NaturalState = { status: readFlag() ? 'ready' : 'none', pct: 0, error: '', stage: '' };
 const subs = new Set<() => void>();
 function set(p: Partial<NaturalState>) {
   state = { ...state, ...p };
@@ -80,30 +81,81 @@ function call<T>(msg: any, onProgress?: (p: any) => void): Promise<T> {
   });
 }
 
-export async function downloadNatural() {
-  if (state.status === 'downloading') return;
-  set({ status: 'downloading', pct: 0, error: '' });
-  const files = new Map<string, number>();
-  try {
-    await call(
-      { type: 'load' },
-      (p) => {
-        files.set(p.file, p.loaded);
-        let loaded = 0;
-        for (const v of files.values()) loaded += v;
-        set({ pct: Math.min(0.9, loaded / (NATURAL_MB * 1e6)) });
+const VOICE_URL = (id: string) => `https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/voices/${id}.bin`;
+
+/** Saves each voice file in the same cache the voice engine reads, without running the model. */
+async function cacheVoices(onEach: (n: number) => void) {
+  const cache = await caches.open('kokoro-voices');
+  let n = 0;
+  for (const v of NATURAL_VOICES) {
+    const url = VOICE_URL(v.id);
+    if (!(await cache.match(url))) {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`Voice file failed (${r.status}).`);
+      await cache.put(url, r);
+    }
+    onEach(++n);
+  }
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
+  return new Promise<T>((res, rej) => {
+    const t = setTimeout(() => {
+      resetWorker(msg);
+      rej(new Error(msg));
+    }, ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        res(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        rej(e);
       }
     );
-    set({ pct: 0.92 });
-    await call({ type: 'warm', voices: NATURAL_VOICES.map((v) => v.id) });
+  });
+}
+
+function resetWorker(reason: string) {
+  worker?.terminate();
+  worker = null;
+  for (const p of pending.values()) p.rej(new Error(reason));
+  pending.clear();
+}
+
+const SLOW = 'The Natural voice downloaded, but this device runs it too slowly to use. On iPhone, Apple\'s Premium voices are the better choice. The Natural voice works well on a Mac.';
+
+export async function downloadNatural() {
+  if (state.status === 'downloading') return;
+  set({ status: 'downloading', pct: 0, error: '', stage: 'Downloading the voice model…' });
+  const files = new Map<string, number>();
+  try {
+    await call({ type: 'load' }, (p) => {
+      files.set(p.file, p.loaded);
+      let loaded = 0;
+      for (const v of files.values()) loaded += v;
+      set({ pct: Math.min(0.85, loaded / (NATURAL_MB * 1e6)) });
+    });
+    set({ pct: 0.86, stage: 'Downloading the six voices…' });
+    await cacheVoices((n) => set({ pct: 0.86 + (n / NATURAL_VOICES.length) * 0.08 }));
+    set({ pct: 0.95, stage: 'Testing it on this device…' });
+    const started = performance.now();
+    await withTimeout(call<Blob>({ type: 'speak', text: 'Ready.', voice: 'af_heart' }), 90_000, SLOW);
+    const ms = performance.now() - started;
     try {
       localStorage.setItem(FLAG, '1');
     } catch {
       /* storage blocked */
     }
-    set({ status: 'ready', pct: 1 });
+    set({ status: 'ready', pct: 1, stage: ms > 20_000 ? 'Works, but slowly on this device. Each sentence may take a few seconds to start.' : '' });
   } catch (e: any) {
-    set({ status: 'error', error: /fetch|network/i.test(e?.message || '') ? 'The download needs a connection. Try again when you have signal.' : e?.message || 'The Natural voice could not load on this device.' });
+    const msg = e?.message || '';
+    set({
+      status: 'error',
+      stage: '',
+      error: /fetch|network|Load failed/i.test(msg) ? 'The download needs a connection. Try again when you have signal.' : msg === SLOW ? SLOW : msg || 'The Natural voice could not load on this device.'
+    });
   }
 }
 
@@ -116,13 +168,14 @@ export async function removeNatural() {
   await purgeCache(/Kokoro/i, ['kokoro-voices']);
   worker?.terminate();
   worker = null;
-  set({ status: 'none', pct: 0, error: '' });
+  set({ status: 'none', pct: 0, error: '', stage: '' });
 }
 
 /** Speaks one sentence with the Natural voice. Returns WAV audio. */
 export function neuralSpeak(text: string, voice: string): Promise<Blob> {
   if (!neuralReady()) return Promise.reject(new Error('The Natural voice is not downloaded.'));
-  return call<Blob>({ type: 'speak', text, voice });
+  // Never let a stuck sentence freeze playback: give up and fall back to another voice.
+  return withTimeout(call<Blob>({ type: 'speak', text, voice }), 45_000, 'The Natural voice took too long.');
 }
 
 /** Deletes cached model files whose URL matches, and whole caches by name. */
