@@ -160,15 +160,30 @@ export function headings(s: Structured): HeadingInfo[] {
 const NUM = '([0-9]+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|twenty[- ]\\w+|thirty)';
 const CHAPTER_RE = new RegExp(`^(chapter|ch\\.?)\\s*${NUM}\\b`, 'i');
 const PART_RE = new RegExp(`^(part|book)\\s+${NUM}\\b`, 'i');
+/** "1. Title", "3 Title", "IV. Title", but not "1.2 Title". */
+const NUMBERED_RE = /^([0-9]{1,2}|[IVXL]{1,6})[.:)]?\s+(?![0-9])\S/;
 const MATTER_RE = /^(prologue|epilogue|introduction|conclusion|preface|foreword|afterword|appendix|acknowledg|notes|bibliography|index)\b/i;
 
 /** Picks which headings start a chapter: real "Chapter N" headings when present, otherwise the top heading level. */
-function chapterStarts(hs: HeadingInfo[]): Set<number> {
+function chapterStarts(all: HeadingInfo[]): Set<number> {
+  // A heading that repeats ("Summary", "Try This") is a section inside each chapter, never a chapter.
+  const key = (h: HeadingInfo) => h.title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const count = new Map<string, number>();
+  all.forEach((h) => count.set(key(h), (count.get(key(h)) || 0) + 1));
+  const unique = all.filter((h) => count.get(key(h)) === 1);
+  const hs = unique.length >= 2 ? unique : all;
   const chapterWord = hs.filter((h) => CHAPTER_RE.test(h.title));
   if (chapterWord.length >= 2) {
     return new Set(hs.filter((h) => CHAPTER_RE.test(h.title) || PART_RE.test(h.title) || MATTER_RE.test(h.title)).map((h) => h.start));
   }
   const levels = [...new Set(hs.map((h) => h.level))].sort((a, b) => a - b);
+  // Everything at one level (older imports flattened headings): look for other signs of a chapter title.
+  if (levels.length === 1 && hs.length > 8) {
+    const numbered = hs.filter((h) => NUMBERED_RE.test(h.title));
+    if (numbered.length >= 2 && numbered.length <= hs.length * 0.6) return new Set(hs.filter((h) => NUMBERED_RE.test(h.title) || PART_RE.test(h.title) || MATTER_RE.test(h.title)).map((h) => h.start));
+    const caps = hs.filter((h) => /[A-Z]/.test(h.title) && h.title === h.title.toUpperCase());
+    if (caps.length >= 2 && caps.length <= hs.length * 0.6) return new Set(caps.map((h) => h.start));
+  }
   for (const L of levels) {
     const top = hs.filter((h) => h.level <= L);
     if (top.length >= 2) return new Set(top.map((h) => h.start));
@@ -203,8 +218,9 @@ export function chapters(s: Structured, docTitle = '', override?: number[] | nul
       const t = p.sentences.join(' ');
       const strong = CHAPTER_RE.test(t);
       if (cur.chars <= minBody && (cur.chars > 0 || cur.title) && raw.length + 1 > 0 && (cur.chars === 0 || !manual)) {
-        // Too little text so far: merge into this chapter. Prefer a real "Chapter N" title.
-        if (cur.chars === 0 || !cur.title || (strong && !cur.strong)) {
+        // Too little text so far (a title page, a "Part One" divider): merge it into this chapter and use this
+        // chapter's title, unless the earlier one was a real "Chapter N" heading.
+        if (!cur.strong || strong) {
           cur.title = t;
           cur.strong = strong;
         }

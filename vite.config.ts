@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig(({ mode }) => ({
-  define: { __RISE_BUILD__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ')) },
+  define: { __RISE_BUILD__: JSON.stringify(process.env.RISE_BUILD || new Date().toISOString().slice(0, 16).replace('T', ' ')) },
   base: mode === 'preview' ? './' : '/',
   build: {
     outDir: mode === 'preview' ? 'dist-preview' : 'dist',
@@ -39,12 +39,19 @@ export default defineConfig(({ mode }) => ({
         ]
       },
       workbox: {
-        navigateFallbackDenylist: [/^\/api\//],
-        globPatterns: ['**/*.{js,mjs,css,html,svg,png,woff2}'],
+        // The app page itself always comes from the network when there is signal, so a new version shows up the next time you open Rise.
+        // The saved copy is only used offline.
+        navigateFallback: null,
+        globPatterns: ['**/*.{js,mjs,css,svg,png,woff2}'],
         // Big on-device model code is cached the first time you download offline answers or the coach.
         globIgnores: ['**/webllm-*.js', '**/llm.worker-*.js', '**/ml.worker-*.js', '**/tts.worker-*.js', '**/*.wasm'],
         maximumFileSizeToCacheInBytes: 9_000_000,
         runtimeCaching: [
+          {
+            urlPattern: ({ request, url }) => request.mode === 'navigate' && !url.pathname.startsWith('/api/'),
+            handler: 'NetworkFirst',
+            options: { cacheName: 'pages', networkTimeoutSeconds: 5, expiration: { maxEntries: 5 } }
+          },
           {
             urlPattern: ({ url }) => url.origin === self.location.origin && /\/assets\/(webllm-|llm\.worker-|ml\.worker-|tts\.worker-|ort-wasm).*/.test(url.pathname),
             handler: 'CacheFirst',

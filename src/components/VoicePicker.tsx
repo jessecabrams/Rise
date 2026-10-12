@@ -83,13 +83,13 @@ export function VoicePicker() {
         ]}
       />
       <p className="hint">
-        {s.provider === 'device' && 'Free voices built into this device. On iPhone and Mac, download "Enhanced" or "Premium" voices in Settings › Accessibility › Spoken Content for much better quality.'}
+        {s.provider === 'device' && (isIOS() ? 'Free voices built into this device.' : 'Free voices built into this device. On a Mac, Chrome also lists any Premium voices you download in System Settings › Accessibility › Spoken Content.')}
         {s.provider === 'neural' && 'Lifelike voices that run on this device. Free, private and they work offline. Slower to start on phones.'}
         {s.provider === 'openai' && 'Natural studio voices. About a penny per few minutes of listening.'}
         {s.provider === 'elevenlabs' && 'The most lifelike voices, with exact word timing. Uses your ElevenLabs credits.'}
         {!(ready && srv.features.openai) && s.provider === 'device' && ' Studio and Premium voices switch on once their keys are added to your Rise server.'}
       </p>
-      {s.provider === 'device' && isIOS() && !list.some((v) => /Premium|Enhanced/.test(v.desc || '')) && list.length > 0 && <AppleVoicesHelp />}
+      {s.provider === 'device' && isIOS() && <AppleVoicesHelp />}
 
       {s.provider === 'openai' && (
         <label className="field" htmlFor="voice-style">
