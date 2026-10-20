@@ -1,4 +1,4 @@
-import { clipBytes, naturalVoice, saveClip, sayChunks } from './speech';
+import { BULK, clipBytes, naturalVoice, saveClip, sayChunks } from './speech';
 import { getState, patchDoc, setSettings } from './store';
 import type { Chapter, Structured } from './text';
 import type { DocBody } from './types';
@@ -71,7 +71,7 @@ export async function makeAudioPacks(
   const work = async () => {
     while (next < texts.length && !cancel.current) {
       const i = next++;
-      const c = await clipBytes(texts[i], v, 3);
+      const c = await clipBytes(texts[i], v, BULK);
       got[i] = { t: texts[i], mime: c.mime, bytes: c.bytes };
       done++;
       const per = (performance.now() - started) / done;

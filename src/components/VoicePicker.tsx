@@ -86,7 +86,11 @@ export function VoicePicker() {
         {s.provider === 'device' && (isIOS() ? 'Free voices built into this device.' : 'Free voices built into this device. On a Mac, Chrome also lists any Premium voices you download in System Settings › Accessibility › Spoken Content.')}
         {s.provider === 'neural' &&
           (natural.status === 'ready' && !isIOS()
-            ? `Lifelike voices made on this computer. Free and private, and audio is saved so replays work offline.${ready && srv.features.kokoro ? ' If this computer falls behind, the cloud version fills in.' : ''}`
+            ? ready && srv.features.kokoro
+              ? s.naturalWhere === 'device'
+                ? 'Made on this computer for free. If it falls behind, the cloud fills in. Downloads and iPhone audio files are always made here for free.'
+                : 'Made in the cloud while you listen, about $1 for every 18 hours. Downloads and iPhone audio files are made on this computer for free. Everything is saved and plays offline.'
+              : 'Lifelike voices made on this computer. Free and private, and audio is saved so replays work offline.'
             : ready && srv.features.kokoro
               ? 'Lifelike voices from the cloud, about $1 for every 18 hours of listening. Anything you hear or download is saved on this device and plays offline.'
               : isIOS()
@@ -97,6 +101,17 @@ export function VoicePicker() {
         {!(ready && srv.features.openai) && s.provider === 'device' && ' Studio and Premium voices switch on once their keys are added to your Rise server.'}
       </p>
       {s.provider === 'device' && isIOS() && <AppleVoicesHelp />}
+      {s.provider === 'neural' && natural.status === 'ready' && !isIOS() && ready && srv.features.kokoro && (
+        <Segmented<'cloud' | 'device'>
+          label="Where the Natural voice is made while you listen"
+          value={s.naturalWhere === 'device' ? 'device' : 'cloud'}
+          onChange={(w) => choose({ naturalWhere: w })}
+          options={[
+            { value: 'cloud', label: 'Cloud: smoothest' },
+            { value: 'device', label: 'This computer: free' }
+          ]}
+        />
+      )}
 
       {s.provider === 'openai' && (
         <label className="field" htmlFor="voice-style">

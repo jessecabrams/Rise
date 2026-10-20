@@ -154,6 +154,8 @@ export interface Settings {
   openaiVoice: string;
   elevenVoice: string;
   neuralVoice: string;
+  /** Where the Natural voice is made while listening, when both are available. */
+  naturalWhere?: 'cloud' | 'device';
   voiceStyle: string;
   rate: number;
   theme: 'auto' | 'light' | 'dark';

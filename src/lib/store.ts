@@ -12,6 +12,7 @@ export const defaultSettings: Settings = {
   openaiVoice: 'coral',
   elevenVoice: '',
   neuralVoice: 'af_heart',
+  naturalWhere: 'cloud',
   voiceStyle: 'Warm, clear and encouraging, like a great coach reading aloud.',
   rate: 1.15,
   theme: 'auto',
