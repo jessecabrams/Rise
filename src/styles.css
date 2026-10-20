@@ -3294,3 +3294,17 @@ mark.w {
 }
 .apple-help ol { margin: 0; padding-left: 20px; display: grid; gap: 4px; line-height: 1.45; }
 .show-more { align-self: center; margin: 12px auto; display: flex; }
+
+/* ---------- people and leaderboard ---------- */
+.invite-card { display: grid; gap: 8px; padding: 14px 16px; border-radius: 16px; background: color-mix(in srgb, var(--gold) 14%, transparent); border: 1px solid color-mix(in srgb, var(--gold) 40%, transparent); }
+.invite-code { font-size: 1.35rem; font-weight: 700; letter-spacing: 0.02em; padding: 8px 12px; border-radius: 10px; background: var(--surface, rgba(255,255,255,.6)); user-select: all; word-break: break-all; }
+.chip-row { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+.chip { flex: none; border: 1px solid color-mix(in srgb, currentColor 18%, transparent); background: transparent; color: inherit; border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 0.85rem; cursor: pointer; }
+.chip.on { background: var(--coral); border-color: var(--coral); color: #fff; }
+.board-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.board-list li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 14px; background: color-mix(in srgb, currentColor 4%, transparent); }
+.board-list li.me { background: color-mix(in srgb, var(--coral) 10%, transparent); }
+.board-rank { width: 28px; text-align: center; font-weight: 700; font-size: 1.1rem; }
+.board-bar { display: block; height: 6px; border-radius: 3px; background: color-mix(in srgb, currentColor 10%, transparent); margin-top: 6px; overflow: hidden; }
+.board-bar span { display: block; height: 100%; background: linear-gradient(90deg, var(--coral), var(--gold)); border-radius: 3px; }
+.board-val { font-weight: 700; font-size: 1.1rem; }

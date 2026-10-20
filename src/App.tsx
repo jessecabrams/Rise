@@ -103,7 +103,7 @@ export default function App() {
       <div className="lock-screen">
         <LogoMark size={72} />
         <h1>Rise</h1>
-        <p>Enter your passcode to open your library.</p>
+        <p>Enter your passcode or invite code to open your library.</p>
         <PasscodeForm />
       </div>
     );

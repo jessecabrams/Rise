@@ -187,6 +187,7 @@ export function award(label: string, xp: number, counters: Record<string, number
     }
     if (g.daily.day !== today) g.daily = { day: today, progress: {}, done: false };
     const before = levelInfo(g.xp).level;
+    const startXp = g.xp;
     g.xp += gained;
     for (const [k, v] of Object.entries(counters)) {
       g.counters[k] = (g.counters[k] || 0) + v;
@@ -217,6 +218,14 @@ export function award(label: string, xp: number, counters: Record<string, number
     }
     const after = levelInfo(g.xp);
     if (after.level > before) events.push({ kind: 'level', level: after.level, title: after.title });
+    // XP per day, for the weekly leaderboard.
+    const add = g.xp - startXp;
+    if (add > 0) {
+      const days = { ...(g.days || {}) };
+      days[today] = (days[today] || 0) + add;
+      for (const k of Object.keys(days).sort().slice(0, -14)) delete days[k];
+      g.days = days;
+    }
     if (!opts.quiet && xp > 0) {
       g.log.unshift({ at: Date.now(), xp, label });
       g.log = g.log.slice(0, 40);

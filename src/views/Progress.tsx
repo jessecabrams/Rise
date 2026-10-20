@@ -3,6 +3,7 @@ import { useApp } from '../lib/store';
 import { BADGES, badgeProgress, dayKey, levelInfo, questsFor } from '../lib/game';
 import { metaSummary } from '../lib/mastery';
 import { go } from '../lib/nav';
+import { Leaderboard } from '../components/People';
 
 function fmtTime(sec: number) {
   const h = Math.floor(sec / 3600);
@@ -90,6 +91,8 @@ export function Progress() {
           <span>avg understanding</span>
         </div>
       </section>
+
+      <Leaderboard />
 
       {skies.length > 0 && (
         <section className="card">

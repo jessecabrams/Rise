@@ -9,7 +9,14 @@ export interface Features {
   storage: boolean;
 }
 
+export interface Profile {
+  id: string;
+  name: string;
+  owner: boolean;
+}
+
 interface ServerState {
+  profile?: Profile | null;
   checked: boolean;
   reachable: boolean;
   passcode: boolean;
@@ -50,7 +57,7 @@ export const server = {
       clearTimeout(t);
       const data = await r.json();
       if (!r.ok || data.app !== 'rise') throw new Error('not rise');
-      set({ checked: true, reachable: true, passcode: !!data.passcode, authed: !!data.authed, features: data.features });
+      set({ checked: true, reachable: true, passcode: !!data.passcode, authed: !!data.authed, features: data.features, profile: data.profile || null });
     } catch {
       set({ checked: true, reachable: false });
     }

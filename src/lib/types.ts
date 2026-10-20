@@ -182,10 +182,14 @@ export interface GameState {
   streak: { current: number; best: number; lastDay: string };
   daily: { day: string; progress: Record<string, number>; done: boolean };
   log: { at: number; xp: number; label: string }[];
+  /** XP earned each day (last two weeks), for the leaderboard. */
+  days?: Record<string, number>;
 }
 
 export interface AppState {
   v: 1;
+  /** Which person this progress belongs to. */
+  profile?: string;
   updatedAt: number;
   settings: Settings;
   game: GameState;

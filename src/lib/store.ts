@@ -184,7 +184,10 @@ export function mergeState(a: AppState, b: AppState): AppState {
     for (const [k, v] of Object.entries(gb.daily.progress)) progress[k] = Math.max(progress[k] || 0, v);
     daily = { day: ga.daily.day, progress, done: ga.daily.done || gb.daily.done };
   }
+  const days: Record<string, number> = { ...(ga.days || {}) };
+  for (const [k, v] of Object.entries(gb.days || {})) days[k] = Math.max(days[k] || 0, v);
   const game: GameState = {
+    days,
     xp: Math.max(ga.xp, gb.xp),
     counters,
     achievements,
@@ -202,15 +205,62 @@ export async function pull() {
   }
   try {
     setSync('syncing');
-    const r = await api<{ state: AppState | null }>('/api/state');
+    const r = await api<{ state: AppState | null; library?: Record<string, any> }>('/api/state');
     if (r.state) {
       state = mergeState(state, migrate(r.state));
+      emit();
+    }
+    // The shared library: pieces the other person added appear here too, with your own fresh progress.
+    let added = false;
+    for (const d of Object.values(r.library || {})) {
+      if (!d?.id || state.docs[d.id] || state.deleted[d.id]) continue;
+      state.docs[d.id] = {
+        id: d.id,
+        title: d.title || 'Untitled',
+        source: d.source || 'paste',
+        sourceUrl: d.sourceUrl,
+        createdAt: d.createdAt || Date.now(),
+        updatedAt: Date.now(),
+        wordCount: d.wordCount || 0,
+        sentenceCount: d.sentenceCount || 0,
+        position: 0,
+        furthest: 0,
+        quiz: { taken: 0, answered: 0, totalScore: 0, best: 0 },
+        lessonCount: 0
+      };
+      added = true;
+    }
+    if (added) {
+      state = { ...state, updatedAt: Date.now() };
       emit();
     }
     await saveNow();
   } catch {
     setSync('error');
   }
+}
+
+/**
+ * Progress on this device belongs to one person. If someone else signs in here (for example, with an
+ * invite code), start them fresh instead of mixing in the other person's progress. Downloaded books stay.
+ */
+export async function claimProfile() {
+  const p = server.state.profile;
+  if (!p || !server.state.authed) return;
+  const theirs = (s: Settings): Settings => ({ ...s, name: p.name, provider: server.has('kokoro') ? 'neural' : s.provider });
+  if (!state.profile) {
+    state = { ...state, profile: p.id };
+    // A new person on this device: use their name, and the Natural voice when it's available.
+    if (!p.owner && (!state.settings.name || state.settings.name === defaultSettings.name)) state.settings = theirs(state.settings);
+    emit();
+    await kvSet('rise:state', state);
+    return;
+  }
+  if (state.profile === p.id) return;
+  const fresh = freshState();
+  state = { ...fresh, profile: p.id, settings: p.owner ? fresh.settings : theirs(fresh.settings), updatedAt: Date.now() };
+  emit();
+  await kvSet('rise:state', state);
 }
 
 export async function boot() {
@@ -222,6 +272,7 @@ export async function boot() {
     emit();
   }
   await server.probe();
+  await claimProfile();
   if (canSync()) await pull();
   const oldSample = state.docs['sample'] && !state.docs['sample'].ideaTotal && !state.docs['sample'].quiz.taken && state.docs['sample'].wordCount !== countWords(SAMPLE_TEXT);
   if ((!Object.keys(state.docs).length && !state.deleted['sample']) || oldSample) {

@@ -1,4 +1,4 @@
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { Redis } from '@upstash/redis';
 
 export class HttpError extends Error {
@@ -20,10 +20,37 @@ function safeEqual(a: string, b: string): boolean {
   return A.length === B.length && timingSafeEqual(A, B);
 }
 
-export function authorized(req: Request): boolean {
+export interface Person {
+  id: string;
+  name: string;
+  owner: boolean;
+}
+
+export const OWNER: Person = { id: 'owner', name: '', owner: true };
+export const codeHash = (code: string) => createHash('sha256').update(code.trim().toLowerCase()).digest('hex');
+
+/** Who is calling: the owner (main passcode) or someone with an invite code. Null if neither. */
+export async function who(req: Request): Promise<Person | null> {
   const need = process.env.APP_PASSCODE;
-  if (!need) return true;
-  return safeEqual(req.headers.get('x-rise-key') || '', need);
+  const key = (req.headers.get('x-rise-key') || '').trim();
+  if (!need) return OWNER;
+  if (key && safeEqual(key, need)) return OWNER;
+  if (!key) return null;
+  const r = store();
+  if (!r) return null;
+  try {
+    const id = await r.get<string>(`rise:invite:${codeHash(key)}`);
+    if (!id) return null;
+    const p = await r.get<{ id: string; name: string }>(`rise:profile:${id}`);
+    return p ? { id: p.id, name: p.name, owner: false } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Kept for simple checks: true for the owner or any invited person. */
+export async function authorized(req: Request): Promise<boolean> {
+  return !!(await who(req));
 }
 
 let redis: Redis | null | undefined;
@@ -55,11 +82,12 @@ export async function readBody<T>(req: Request, max = 4_500_000): Promise<T> {
   }
 }
 
-export function guard(fn: (req: Request) => Promise<Response>) {
+export function guard(fn: (req: Request, me: Person) => Promise<Response>) {
   return async (req: Request): Promise<Response> => {
     try {
-      if (!authorized(req)) return json({ error: 'Enter your passcode to continue.' }, 401);
-      return await fn(req);
+      const me = await who(req);
+      if (!me) return json({ error: 'Enter your passcode to continue.' }, 401);
+      return await fn(req, me);
     } catch (e: any) {
       const status = e instanceof HttpError ? e.status : 500;
       return json({ error: e?.message || 'Something went wrong on the server.' }, status);

@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { Icon, Segmented, Sheet, Toggle } from '../components/ui';
 import { VoicePicker, SpeedControl } from '../components/VoicePicker';
 import { TextSettings } from './Reader';
-import { exportAll, importAll, pull, resetProgress, setSettings, useApp, useSyncStatus } from '../lib/store';
+import { claimProfile, exportAll, importAll, pull, resetProgress, setSettings, useApp, useSyncStatus } from '../lib/store';
 import { server, setKey, useServer } from '../lib/api';
 import { installPrompt } from '../lib/install';
 import { OfflineSettings } from './OfflinePanel';
+import { PeopleSettings } from '../components/People';
 import { BUILD, updateNow } from '../lib/update';
 
 export function SettingsView() {
@@ -56,6 +57,11 @@ export function SettingsView() {
           </span>
           <input id="goal" type="range" min={5} max={60} step={5} value={st.dailyGoalMin} onChange={(e) => setSettings({ dailyGoalMin: Number(e.target.value) })} />
         </label>
+      </section>
+
+      <section className="card stack">
+        <h2>People</h2>
+        <PeopleSettings />
       </section>
 
       <section className="card stack">
@@ -231,12 +237,15 @@ export function PasscodeForm() {
         e.preventDefault();
         setKey(code.trim());
         const s = await server.probe();
-        if (!s.authed) setErr('That passcode did not match. Check APP_PASSCODE in Vercel.');
-        else await pull();
+        if (!s.authed) setErr('That code did not match. Check it and try again.');
+        else {
+          await claimProfile();
+          await pull();
+        }
       }}
     >
       <label className="field" htmlFor="passcode">
-        <span>Passcode</span>
+        <span>Passcode or invite code</span>
         <input id="passcode" type="password" autoComplete="current-password" value={code} onChange={(e) => setCode(e.target.value)} />
       </label>
       <button className="btn btn-sun" type="submit" disabled={!code.trim()}>
