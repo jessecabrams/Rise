@@ -65,6 +65,26 @@ export function startCrumbs() {
   }
 }
 
+let lastReport = 0;
+/** Sends the recent steps when something goes wrong without a crash (for example, audio stops). */
+export function reportProblem(what: string) {
+  crumb(`PROBLEM ${what}`);
+  if (Date.now() - lastReport < 60_000) return;
+  lastReport = Date.now();
+  let key = '';
+  try {
+    key = localStorage.getItem('rise-key') || '';
+  } catch {
+    /* ignore */
+  }
+  fetch('/api/health', {
+    method: 'POST',
+    keepalive: true,
+    headers: { 'content-type': 'application/json', 'x-rise-key': key },
+    body: JSON.stringify({ problem: what, crash: JSON.stringify(trail), ua: navigator.userAgent })
+  }).catch(() => {});
+}
+
 if (typeof window !== 'undefined') {
   startCrumbs();
   window.addEventListener('error', (e) => crumb(`error ${String(e.message).slice(0, 120)}`));

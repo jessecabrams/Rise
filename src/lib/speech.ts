@@ -1,4 +1,4 @@
-import { crumb, safeMode } from './crumbs';
+import { crumb, reportProblem, safeMode } from './crumbs';
 import { useSyncExternalStore } from 'react';
 import { getState } from './store';
 import { api, server } from './api';
@@ -305,6 +305,7 @@ class Player {
     };
   }
   private set(patch: Partial<PlayerState>) {
+    if (patch.error && patch.error !== this.s.error) reportProblem(patch.error);
     this.s = { ...this.s, ...patch };
     this.subs.forEach((f) => f());
   }
@@ -457,6 +458,20 @@ class Player {
         break;
       } catch (e: any) {
         failure ||= e.message;
+        crumb(`audio failed for ${i}: ${String(e.message).slice(0, 80)}`);
+        // A hiccup in the connection shouldn't switch voices: try once more.
+        if (e.message !== 'offline' && isOnline() && tok === this.token) {
+          await sleep(700);
+          if (tok !== this.token) return;
+          try {
+            clips.delete(`${v.provider}|${v.voice}|${v.style}|${this.sentences[i]}`);
+            clip = await urgentClip(this.sentences[i], v);
+            used = v;
+            break;
+          } catch {
+            /* fall through to the next voice */
+          }
+        }
       }
       if (tok !== this.token) return;
     }
@@ -486,6 +501,24 @@ class Player {
     (a as any).preservesPitch = true;
     a.onended = () => {
       if (tok === this.token) this.done(i, tok);
+    };
+    // A sentence whose audio won't play is skipped instead of stopping everything.
+    a.onerror = () => {
+      if (tok !== this.token) return;
+      crumb(`audio error on ${i}: ${a.error?.code || '?'}`);
+      clips.delete(`${used!.provider}|${used!.voice}|${used!.style}|${this.sentences[i]}`);
+      this.done(i, tok);
+    };
+    // The phone paused the sound itself (a call, another app, a notification): show it as paused.
+    a.onpause = () => {
+      if (tok !== this.token || a.ended || !this.s.playing) return;
+      setTimeout(() => {
+        if (tok === this.token && a.paused && !a.ended && this.s.playing) {
+          crumb(`paused by the phone at ${i}`);
+          this.token++;
+          this.set({ playing: false, loading: false });
+        }
+      }, 300);
     };
     try {
       await a.play();
