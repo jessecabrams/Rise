@@ -4,7 +4,7 @@ import { ErrorNote, Icon, Sheet } from '../components/ui';
 import { DocOffline } from './OfflinePanel';
 import { getBody, patchDoc, saveBody, useApp } from '../lib/store';
 import { go, type DocTab } from '../lib/nav';
-import { chapterAt, chapters, structure } from '../lib/text';
+import { chapterAt, chapters, structure, type Chapter } from '../lib/text';
 import { ChaptersPanel } from '../components/Chapters';
 import { usePlayer } from '../lib/speech';
 import type { DocBody, QuizFocus } from '../lib/types';
@@ -37,7 +37,6 @@ export function Doc({ id, tab, focus, nonce }: { id: string; tab: DocTab; focus?
   const [renaming, setRenaming] = useState(false);
   const [offlineOpen, setOfflineOpen] = useState(false);
   const [chaptersOpen, setChaptersOpen] = useState(false);
-  const p = usePlayer();
 
   // Reload when background work (like coach reviews of offline answers) changes this piece.
   useEffect(() => {
@@ -124,8 +123,6 @@ export function Doc({ id, tab, focus, nonce }: { id: string; tab: DocTab; focus?
   const ctx: DocCtx | null =
     body && s ? { id, title: meta.title, body, s, chs, bodyRef: bodyRef as { current: DocBody }, update, setBody: (b) => update(() => b) } : null;
   ctxRef.current = ctx;
-  const at = p.docId === id ? p.index : meta.position || 0;
-  const curCh = chs.length > 1 ? chapterAt(chs, at) : undefined;
 
   return (
     <div className="page doc-page">
@@ -151,14 +148,7 @@ export function Doc({ id, tab, focus, nonce }: { id: string; tab: DocTab; focus?
             {meta.title}
           </h1>
         )}
-        {curCh && (
-          <button className="pill ch-pill" onClick={() => setChaptersOpen(true)} aria-label={`Chapters. Now in chapter ${curCh.index + 1} of ${chs.length}`} title="Chapters">
-            <Icon name="list" size={18} />
-            <span className="tabular">
-              {curCh.index + 1}/{chs.length}
-            </span>
-          </button>
-        )}
+        <ChapterPill id={id} chs={chs} onOpen={() => setChaptersOpen(true)} />
         <button className={`icon-btn ${meta.offline ? 'is-offline' : ''}`} onClick={() => setOfflineOpen(true)} aria-label={meta.offline ? 'Downloaded for offline' : 'Download for offline'} title={meta.offline ? 'Downloaded for offline' : 'Download for offline'}>
           <Icon name={meta.offline ? 'check' : 'download'} size={18} />
         </button>
@@ -192,5 +182,22 @@ export function Doc({ id, tab, focus, nonce }: { id: string; tab: DocTab; focus?
         </div>
       )}
     </div>
+  );
+}
+
+/** Its own small piece, so the whole page isn't redrawn every time the reading moves on. */
+function ChapterPill({ id, chs, onOpen }: { id: string; chs: Chapter[]; onOpen: () => void }) {
+  const p = usePlayer();
+  const pos = useApp((s) => s.docs[id]?.position || 0);
+  if (chs.length < 2) return null;
+  const cur = chapterAt(chs, p.docId === id ? p.index : pos);
+  if (!cur) return null;
+  return (
+    <button className="pill ch-pill" onClick={onOpen} aria-label={`Chapters. Now in chapter ${cur.index + 1} of ${chs.length}`} title="Chapters">
+      <Icon name="list" size={18} />
+      <span className="tabular">
+        {cur.index + 1}/{chs.length}
+      </span>
+    </button>
   );
 }

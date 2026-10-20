@@ -1,5 +1,5 @@
 import { crumb } from '../lib/crumbs';
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Icon, Sheet } from '../components/ui';
 import { player, usePlayer } from '../lib/speech';
 import { setSettings, useApp } from '../lib/store';
@@ -50,6 +50,37 @@ export function Reader({ id, title, s, chs, onChapters }: { id: string; title: s
   const mine = p.docId === id;
   const index = mine ? p.index : meta?.position || 0;
   const userScrolled = useRef(0);
+  // Words before each sentence, counted once. (Counting the rest of a long book on every word was slow and used lots of memory.)
+  const wordsBefore = useMemo(() => {
+    const a = new Int32Array(s.sentences.length + 1);
+    for (let k = 0; k < s.sentences.length; k++) a[k + 1] = a[k] + (s.sentences[k].match(/\S+/g) || []).length;
+    return a;
+  }, [s]);
+  const remaining = wordsBefore[s.sentences.length] - wordsBefore[Math.min(index, s.sentences.length)];
+
+  // Only the text near where you are is drawn. Long books stay fast and light, even on a phone.
+  const paraOf = (i: number) => {
+    let lo = 0;
+    let hi = s.paras.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (s.paras[mid].start <= i) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  };
+  const BEFORE = 60;
+  const AFTER = 160;
+  const [win, setWin] = useState<[number, number]>(() => {
+    const k = paraOf(index);
+    return [Math.max(0, k - BEFORE), Math.min(s.paras.length, k + AFTER)];
+  });
+  const here = paraOf(index);
+  useEffect(() => {
+    if (here < win[0] + 5 || here > win[1] - 20) setWin([Math.max(0, here - BEFORE), Math.min(s.paras.length, here + AFTER)]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [here, s]);
+  const shown = s.paras.slice(win[0], win[1]);
 
   useEffect(() => {
     if (!mine) player.load(id, title, s.sentences, meta?.position || 0);
@@ -75,13 +106,17 @@ export function Reader({ id, title, s, chs, onChapters }: { id: string; title: s
     if (r.top < 90 || r.bottom > innerHeight - 170) {
       el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     }
-  }, [index, mine, st.autoScroll, st.focusMode]);
+  }, [index, mine, st.autoScroll, st.focusMode, win[0]]);
 
   useEffect(() => crumb('reader shown'), []);
-  const pick = (i: number) => {
+  const pickNow = (i: number) => {
     if (!mine) player.load(id, title, s.sentences, i);
     player.play(i);
   };
+  // A stable handler, so paragraphs that didn't change aren't redrawn every time a word is highlighted.
+  const pickRef = useRef(pickNow);
+  pickRef.current = pickNow;
+  const pick = useCallback((i: number) => pickRef.current(i), []);
 
   const start = () => {
     if (!mine) player.load(id, title, s.sentences, meta?.position || 0);
@@ -89,7 +124,6 @@ export function Reader({ id, title, s, chs, onChapters }: { id: string; title: s
   };
 
   const word = mine && st.wordHighlight ? p.word : null;
-  const remaining = s.sentences.slice(index).join(' ').split(/\s+/).length;
   const font = st.readingFont === 'serif' ? 'var(--serif)' : st.readingFont === 'lexend' ? 'var(--display)' : 'var(--body)';
 
   return (
@@ -147,11 +181,22 @@ export function Reader({ id, title, s, chs, onChapters }: { id: string; title: s
         </div>
       ) : (
         <div ref={box} className="reading" style={{ fontFamily: font, fontSize: `${st.fontSize}px`, lineHeight: st.lineHeight }}>
-          {s.paras.map((para, k) => {
+          {win[0] > 0 && (
+            <button className="btn btn-ghost sm show-more" onClick={() => setWin([Math.max(0, win[0] - 120), win[1]])}>
+              Show earlier text
+            </button>
+          )}
+          {shown.map((para, j) => {
+            const k = win[0] + j;
             const inPara = index >= para.start && index < para.start + para.sentences.length;
             return <Paragraph key={k} para={para} active={mine && inPara ? index : !mine && inPara && index > 0 ? index : -1} word={inPara ? word : null} onPick={pick} />;
           })}
-          <div className="reading-end">
+          {win[1] < s.paras.length && (
+            <button className="btn btn-ghost sm show-more" onClick={() => setWin([win[0], Math.min(s.paras.length, win[1] + 200)])}>
+              Show more text
+            </button>
+          )}
+          {win[1] >= s.paras.length && <div className="reading-end">
             <p>Done listening? Lock it in.</p>
             <div className="row gap center">
               <button className="btn btn-sun" onClick={() => go({ name: 'doc', id, tab: 'quiz' })}>
@@ -161,7 +206,7 @@ export function Reader({ id, title, s, chs, onChapters }: { id: string; title: s
                 <Icon name="spark" size={18} /> Build a learning guide
               </button>
             </div>
-          </div>
+          </div>}
         </div>
       )}
 
