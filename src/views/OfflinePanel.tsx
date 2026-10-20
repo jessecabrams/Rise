@@ -189,9 +189,9 @@ export function OfflineSettings() {
               Stop
             </button>
           )}
-          {natural.status !== 'ready' && (
+          {natural.status !== 'ready' && !isIOS() && (
             <button
-              className={isIOS() ? 'btn btn-ghost' : 'btn btn-sun'}
+              className="btn btn-sun"
               disabled={!online || natural.status === 'downloading'}
               onClick={async () => {
                 await keepStorage();

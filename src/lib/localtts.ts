@@ -2,6 +2,9 @@ import { useSyncExternalStore } from 'react';
 
 /** The Natural voice: a neural voice that runs on the device, so everything can be read aloud offline. */
 
+/** True on iPhone and iPad, where the Natural voice is usually too heavy to run. */
+export const isIOS = () => typeof navigator !== 'undefined' && (/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+
 const FLAG = 'rise-natural-voice-v1';
 export const NATURAL_MB = 95;
 
@@ -29,7 +32,7 @@ function readFlag() {
   }
 }
 
-let state: NaturalState = { status: readFlag() ? 'ready' : 'none', pct: 0, error: '', stage: '' };
+let state: NaturalState = { status: readFlag() && !isIOS() ? 'ready' : 'none', pct: 0, error: '', stage: '' };
 const subs = new Set<() => void>();
 function set(p: Partial<NaturalState>) {
   state = { ...state, ...p };
@@ -46,14 +49,13 @@ export function useNatural(): NaturalState {
   );
 }
 
-export const neuralReady = () => state.status === 'ready';
+/** Ready to use on this device. Never on iPhone or iPad: the model is too big for them and can crash the browser. */
+export const neuralReady = () => state.status === 'ready' && !isIOS();
 
 /* ---------- a small pool of voice workers ---------- */
 // On a computer, two or three workers run side by side so the next sentences are ready before they're needed.
 // On a phone, one is all it can manage.
 
-/** True on iPhone and iPad, where the Natural voice is usually too heavy to run. */
-export const isIOS = () => typeof navigator !== 'undefined' && (/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
 
 const POOL = (() => {
   if (typeof navigator === 'undefined' || isIOS() || /Android/i.test(navigator.userAgent)) return 1;
@@ -133,6 +135,7 @@ function pump() {
 }
 
 function run<T>(msg: any, pri: number, opts: { onProgress?: (p: any) => void; timeout?: number; size?: number } = {}): Promise<T> {
+  if (isIOS()) return Promise.reject(new Error('The Natural voice can only be made on a computer.'));
   const want = opts.size ?? POOL;
   for (let i = 0; i < want; i++) if (!slots[i]) spawn(i);
   return new Promise<T>((res, rej) => {
@@ -198,7 +201,7 @@ async function cacheVoices(onEach: (n: number) => void) {
 const SLOW = 'The Natural voice downloaded, but this device runs it too slowly to use. On iPhone, Apple\'s Premium voices are the better choice. The Natural voice works well on a Mac.';
 
 export async function downloadNatural() {
-  if (state.status === 'downloading') return;
+  if (state.status === 'downloading' || isIOS()) return;
   set({ status: 'downloading', pct: 0, error: '', stage: 'Downloading the voice model…' });
   const files = new Map<string, number>();
   try {

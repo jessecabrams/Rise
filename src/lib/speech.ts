@@ -452,7 +452,7 @@ class Player {
     }
     this.set({ loading: false });
     // Keep several sentences ready ahead of the one playing, so there are no gaps.
-    const ahead = used.provider === 'neural' ? 8 : 3;
+    const ahead = used.provider === 'neural' ? (localNatural() ? 8 : 4) : 3;
     for (let k = 1; k <= ahead; k++) if (this.sentences[i + k]) fetchClip(this.sentences[i + k], false, used, k).catch(() => {});
     // This computer fell behind recently: have the cloud help with the next few so there are no more pauses.
     if (used.provider === 'neural' && Date.now() < behindUntil && getState().settings.naturalWhere === 'device' && server.has('kokoro') && isOnline()) {
