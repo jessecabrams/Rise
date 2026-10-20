@@ -1,3 +1,4 @@
+import { crumb } from './crumbs';
 import { useSyncExternalStore } from 'react';
 import { del as idbDel, get as idbGet, set as idbSet } from 'idb-keyval';
 import type { AppState, DocBody, DocMeta, GameState, Settings, SourceKind } from './types';
@@ -213,7 +214,9 @@ export async function pull() {
 }
 
 export async function boot() {
+  crumb('boot');
   const local = await kvGet<AppState>('rise:state');
+  crumb(`boot: ${local ? Object.keys(local.docs || {}).length + ' pieces' : 'fresh'}`);
   if (local && local.v === 1) {
     state = migrate(local);
     emit();
@@ -228,7 +231,9 @@ export async function boot() {
 
 /* ---------- documents ---------- */
 export async function getBody(id: string): Promise<DocBody | null> {
+  crumb(`open piece`);
   let b = await kvGet<DocBody>(`rise:doc:${id}`);
+  crumb(`piece loaded: ${b ? Math.round((b.text || '').length / 1024) + ' KB text, ' + Math.round(JSON.stringify(b).length / 1024) + ' KB total' : 'not on device'}`);
   if (!b && canSync()) {
     try {
       const r = await api<{ body: DocBody | null }>(`/api/doc?id=${encodeURIComponent(id)}`);

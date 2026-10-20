@@ -1,3 +1,4 @@
+import { crumb } from '../lib/crumbs';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ErrorNote, Icon, Sheet } from '../components/ui';
 import { DocOffline } from './OfflinePanel';
@@ -74,15 +75,30 @@ export function Doc({ id, tab, focus, nonce }: { id: string; tab: DocTab; focus?
   }, [id]);
 
   const text = body?.text;
-  const s = useMemo(() => (text != null ? structure(text, id) : null), [text, id]);
+  const s = useMemo(() => {
+    if (text == null) return null;
+    crumb('splitting into sentences');
+    const r = structure(text, id);
+    crumb(`${r.sentences.length} sentences, ${r.paras.length} paragraphs`);
+    return r;
+  }, [text, id]);
   const startsKey = meta?.chapterStarts?.join(',') || '';
-  const chs = useMemo(() => (s ? chapters(s, meta?.title || '', meta?.chapterStarts) : []), [s, meta?.title, startsKey]);
+  const chs = useMemo(() => {
+    if (!s) return [];
+    const r = chapters(s, meta?.title || '', meta?.chapterStarts);
+    crumb(`${r.length} chapters`);
+    return r;
+  }, [s, meta?.title, startsKey]);
   const ctxRef = useRef<DocCtx | null>(null);
   const chKey = chs.map((c) => `${c.start}:${c.title}`).join('|');
   const loaded = !!body;
   // Keep saved maps, questions and guides attached to the right chapter when the chapter list changes.
   useEffect(() => {
-    if (loaded && ctxRef.current) reconcileChapters(ctxRef.current);
+    if (loaded && ctxRef.current) {
+      crumb('matching saved maps to chapters');
+      reconcileChapters(ctxRef.current);
+      crumb('matched');
+    }
   }, [chKey, loaded]);
 
   if (!meta) {

@@ -1,3 +1,4 @@
+import { crumb } from '../lib/crumbs';
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Icon, Sheet } from '../components/ui';
 import { player, usePlayer } from '../lib/speech';
@@ -76,6 +77,7 @@ export function Reader({ id, title, s, chs, onChapters }: { id: string; title: s
     }
   }, [index, mine, st.autoScroll, st.focusMode]);
 
+  useEffect(() => crumb('reader shown'), []);
   const pick = (i: number) => {
     if (!mine) player.load(id, title, s.sentences, i);
     player.play(i);

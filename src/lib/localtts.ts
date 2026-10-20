@@ -1,3 +1,4 @@
+import { crumb } from './crumbs';
 import { useSyncExternalStore } from 'react';
 
 /** The Natural voice: a neural voice that runs on the device, so everything can be read aloud offline. */
@@ -89,6 +90,7 @@ const queue: Job[] = [];
 let seq = 0;
 
 function spawn(i: number): Slot {
+  crumb(`voice engine worker ${i} starting`);
   const w = new Worker(new URL('../workers/tts.worker.ts', import.meta.url), { type: 'module' });
   const slot: Slot = { w, busy: null, timer: null };
   w.onmessage = (e) => {

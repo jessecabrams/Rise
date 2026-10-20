@@ -1,3 +1,4 @@
+import { crumb } from './crumbs';
 import { useSyncExternalStore } from 'react';
 import { getState } from './store';
 import { api, server } from './api';
@@ -109,6 +110,7 @@ let behindUntil = 0;
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 async function cloudClip(text: string, v: Voice): Promise<StoredClip> {
+  crumb(`cloud request ${text.length} chars`);
   if (!isOnline() || !server.ok()) throw new Error('offline');
   const r = await api<{ audio: string; mime: string; starts: number[] | null }>('/api/tts', {
     method: 'POST',
@@ -312,6 +314,7 @@ class Player {
   }
 
   play(index = this.s.index) {
+    crumb(`play at ${index} of ${this.sentences.length}, voice ${getState().settings.provider}`);
     if (!this.sentences.length) return;
     this.stopAll();
     clearPrefetch();
@@ -376,6 +379,7 @@ class Player {
   }
 
   private speakDevice(i: number, tok: number) {
+    crumb(`device voice sentence ${i}`);
     if (typeof speechSynthesis === 'undefined') {
       this.set({ playing: false, error: 'This browser cannot read aloud. Try Chrome, Edge or Safari.' });
       return;
@@ -402,6 +406,7 @@ class Player {
   }
 
   private async speakCloud(i: number, tok: number) {
+    crumb(`audio voice sentence ${i}`);
     // Only say we're waiting if it's a real wait, not the normal step between sentences.
     this.set({ engine: 'cloud' });
     const waitTimer = setTimeout(() => tok === this.token && this.set({ loading: true }), 400);
@@ -435,6 +440,7 @@ class Player {
       this.set({ error: "You're offline and this part isn't downloaded, so the Natural voice on your device is reading it." });
     }
     if (tok !== this.token) return;
+    crumb(`got audio for ${i} from ${used.provider}`);
     this.clip = clip;
     if (!this.audio) this.audio = new Audio();
     const a = this.audio;
@@ -450,6 +456,7 @@ class Player {
       if (tok === this.token) this.set({ playing: false, loading: false, error: 'Tap play to start audio.' });
       return;
     }
+    crumb(`playing ${i}`);
     this.set({ loading: false });
     // Keep several sentences ready ahead of the one playing, so there are no gaps.
     const ahead = used.provider === 'neural' ? (localNatural() ? 8 : 4) : 3;

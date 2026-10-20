@@ -1,3 +1,4 @@
+import './lib/crumbs';
 import { startUpdates } from './lib/update';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
