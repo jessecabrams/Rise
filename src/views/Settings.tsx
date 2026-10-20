@@ -285,7 +285,7 @@ function UpdateButton() {
         updateNow();
       }}
     >
-      <Icon name="refresh" size={16} /> {busy ? 'Updating…' : 'Update now'}
+      <Icon name="refresh" size={16} /> {busy ? 'Restarting…' : 'Update now (restarts Rise)'}
     </button>
   );
 }

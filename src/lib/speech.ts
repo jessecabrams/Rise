@@ -257,6 +257,10 @@ export { naturalVoice };
 export type { StoredClip, Voice };
 
 /* ---------- player ---------- */
+// A tiny silent sound, used to unlock audio on iPhone during the tap on play.
+const SILENCE = 'data:audio/mpeg;base64,//NAxAAAAANIAAAAAExBTUUDAAkIAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/80LEAAAAA0gAAAAATEFNRQMACQgABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/80DEAAAAA0gAAAAATEFNRQMACQgABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/zQsQAAAADSAAAAABMQU1FAwAJCAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/zQMQAAAADSAAAAABMQU1FAwAJCAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//NCxAAAAANIAAAAAExBTUUDAAkIAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+let unlockedSpeech = false;
+
 export interface PlayerState {
   docId: string | null;
   title: string;
@@ -318,7 +322,35 @@ class Player {
     this.set({ docId: null, title: '', playing: false, total: 0, index: 0, word: null });
   }
 
+  /**
+   * iPhones only allow sound that starts during a tap. Audio arrives a moment later, so each tap on play
+   * "unlocks" the audio player and the speech engine right away.
+   */
+  private unlock() {
+    try {
+      if (!this.audio) this.audio = new Audio();
+      const a = this.audio;
+      if (!a.src || a.paused) {
+        a.src = SILENCE;
+        a.play().catch(() => {});
+      }
+    } catch {
+      /* not supported */
+    }
+    try {
+      if (typeof speechSynthesis !== 'undefined' && !unlockedSpeech) {
+        const u = new SpeechSynthesisUtterance(' ');
+        u.volume = 0;
+        speechSynthesis.speak(u);
+        unlockedSpeech = true;
+      }
+    } catch {
+      /* not supported */
+    }
+  }
+
   play(index = this.s.index) {
+    this.unlock();
     crumb(`play at ${index} of ${this.sentences.length}, voice ${getState().settings.provider}`);
     if (!this.sentences.length) return;
     this.stopAll();

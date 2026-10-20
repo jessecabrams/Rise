@@ -165,9 +165,21 @@ export default function App() {
           </span>
         )}
         {safeMode && (
-          <span className="offline-pill" role="status" title="Rise crashed twice, so it is reading with the device voice for now.">
-            Safe mode
-          </span>
+          <button
+            className="offline-pill"
+            title="Rise crashed twice, so it is reading with the device voice for now. Tap to leave safe mode."
+            onClick={() => {
+              try {
+                localStorage.setItem('rise-crash-count', '0');
+                localStorage.setItem('rise-clean-exit', '1');
+              } catch {
+                /* ignore */
+              }
+              location.reload();
+            }}
+          >
+            Safe mode · tap to leave
+          </button>
         )}
         <button className="top-xp" onClick={() => go({ name: 'progress' })} aria-label={`Level ${lvl.level}, ${liveStreak} day streak`}>
           <span className="lvl-badge tabular">{lvl.level}</span>
