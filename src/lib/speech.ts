@@ -1,4 +1,4 @@
-import { crumb } from './crumbs';
+import { crumb, safeMode } from './crumbs';
 import { useSyncExternalStore } from 'react';
 import { getState } from './store';
 import { api, server } from './api';
@@ -68,6 +68,8 @@ export function naturalSource(): 'local' | 'cloud' | null {
 }
 
 function cloudVoice(): Voice | null {
+  // After two crashes in a row, read with the device voice until Rise runs smoothly again.
+  if (safeMode) return null;
   const s = getState().settings;
   if (s.provider === 'neural') return naturalVoice();
   // Offline, keep the chosen studio voice so downloaded audio still plays.
@@ -116,7 +118,10 @@ async function cloudClip(text: string, v: Voice): Promise<StoredClip> {
     method: 'POST',
     body: { text, provider: v.provider === 'neural' ? 'kokoro' : v.provider, voice: v.voice, style: v.style }
   });
-  const bytes = Uint8Array.from(atob(r.audio), (c) => c.charCodeAt(0));
+  const bin = atob(r.audio);
+  const bytes = new Uint8Array(bin.length);
+  for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
+  crumb(`cloud audio ${Math.round(bytes.length / 1024)} KB ${r.mime}`);
   return { mime: r.mime, bytes: bytes.buffer, starts: r.starts };
 }
 
@@ -452,6 +457,7 @@ class Player {
     };
     try {
       await a.play();
+      crumb(`audio started ${i}`);
     } catch {
       if (tok === this.token) this.set({ playing: false, loading: false, error: 'Tap play to start audio.' });
       return;

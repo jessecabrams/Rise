@@ -3,6 +3,7 @@ import { boot, getState, patchDoc, pull, saveNow, useApp } from './lib/store';
 import { go, useView } from './lib/nav';
 import { player } from './lib/speech';
 import { prewarmNatural } from './lib/localtts';
+import { safeMode } from './lib/crumbs';
 import { award, dayKey, levelInfo } from './lib/game';
 import { server, useServer } from './lib/api';
 import { onOnline, useOnline } from './lib/online';
@@ -161,6 +162,11 @@ export default function App() {
         {!online && (
           <span className="offline-pill" role="status">
             <Icon name="wifiOff" size={14} /> Offline
+          </span>
+        )}
+        {safeMode && (
+          <span className="offline-pill" role="status" title="Rise crashed twice, so it is reading with the device voice for now.">
+            Safe mode
           </span>
         )}
         <button className="top-xp" onClick={() => go({ name: 'progress' })} aria-label={`Level ${lvl.level}, ${liveStreak} day streak`}>
