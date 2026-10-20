@@ -4,7 +4,7 @@ import { api, server } from './api';
 import { wordAt } from './text';
 import { createStore, get as idbGet, set as idbSet, del as idbDel } from 'idb-keyval';
 import { isOnline } from './online';
-import { neuralReady, neuralSpeak } from './localtts';
+import { clearPrefetch, localNatural, neuralReady, neuralSpeak } from './localtts';
 
 let audioStore: ReturnType<typeof createStore> | null = null;
 const clipStore = () => (audioStore ||= createStore('rise-audio', 'clips'));
@@ -53,14 +53,22 @@ interface Voice {
   style: string;
 }
 
-/** The natural on-device voice, if it is downloaded. */
-function neuralVoice(): Voice | null {
-  return neuralReady() ? { provider: 'neural', voice: getState().settings.neuralVoice || 'af_heart', style: '' } : null;
+/** The Natural voice: made on this device, fetched from the cloud, or played from saved audio. */
+function naturalVoice(): Voice {
+  return { provider: 'neural', voice: getState().settings.neuralVoice || 'af_heart', style: '' };
+}
+
+/** Where new Natural voice audio can come from right now. */
+export function naturalSource(): 'local' | 'cloud' | null {
+  if (localNatural()) return 'local';
+  if (server.has('kokoro') && isOnline()) return 'cloud';
+  if (neuralReady()) return 'local';
+  return null;
 }
 
 function cloudVoice(): Voice | null {
   const s = getState().settings;
-  if (s.provider === 'neural') return neuralVoice();
+  if (s.provider === 'neural') return naturalVoice();
   // Offline, keep the chosen studio voice so downloaded audio still plays.
   const offline = !isOnline() || !server.state.reachable;
   if (s.provider === 'openai' && (server.has('openai') || offline)) return { provider: 'openai', voice: s.openaiVoice, style: s.voiceStyle };
@@ -68,17 +76,24 @@ function cloudVoice(): Voice | null {
   return null;
 }
 
-/** Voices to try in order. The natural on-device voice backs up studio voices when they can't be reached. */
+/** Voices to try in order. The Natural voice backs up studio voices when they can't be reached. */
 function voiceChain(): Voice[] {
   const main = cloudVoice();
-  const nv = neuralVoice();
-  return [main, main?.provider !== 'neural' ? nv : null].filter(Boolean) as Voice[];
+  const backup = main?.provider !== 'neural' && naturalSource() ? naturalVoice() : null;
+  return [main, backup].filter(Boolean) as Voice[];
 }
 
-/** Identifies the current studio voice, or null when there is nothing to download (device or on-device voices). */
+/** Identifies the current voice's saved audio, or null for device voices. */
 export function voiceKey(): string | null {
   const v = cloudVoice();
-  return v && v.provider !== 'neural' ? `${v.provider}|${v.voice}|${v.style}` : null;
+  return v ? `${v.provider}|${v.voice}|${v.style}` : null;
+}
+
+/** Can audio for the current voice be downloaded right now? */
+export function canDownloadAudio(): boolean {
+  const v = cloudVoice();
+  if (!v) return false;
+  return v.provider === 'neural' ? !!naturalSource() : true;
 }
 
 /** How spoken text is split into clips. Downloads and playback must agree. */
@@ -87,16 +102,46 @@ export function sayChunks(text: string): string[] {
 }
 
 const clips = new Map<string, Promise<Clip>>();
+const ready = new Set<string>();
+/** Set when this computer couldn't keep up, so the cloud helps with the next few sentences. */
+let behindUntil = 0;
 
-function fetchClip(text: string, persist = false, v: Voice = cloudVoice()!): Promise<Clip> {
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+async function cloudClip(text: string, v: Voice): Promise<StoredClip> {
+  if (!isOnline() || !server.ok()) throw new Error('offline');
+  const r = await api<{ audio: string; mime: string; starts: number[] | null }>('/api/tts', {
+    method: 'POST',
+    body: { text, provider: v.provider === 'neural' ? 'kokoro' : v.provider, voice: v.voice, style: v.style }
+  });
+  const bytes = Uint8Array.from(atob(r.audio), (c) => c.charCodeAt(0));
+  return { mime: r.mime, bytes: bytes.buffer, starts: r.starts };
+}
+
+/** Natural voice audio from wherever is fastest: this computer, or the cloud if this computer falls behind. */
+async function naturalClip(text: string, v: Voice, pri: number): Promise<StoredClip> {
+  const local = localNatural() || (neuralReady() && !(server.has('kokoro') && isOnline()));
+  const cloud = server.has('kokoro') && isOnline();
+  if (local) {
+    const mine = neuralSpeak(text, v.voice, pri).then((c) => ({ mime: c.mime, bytes: c.bytes, starts: null }) as StoredClip);
+    if (!cloud || pri > 0) return mine;
+    // Needed right now: give the computer a moment, then ask the cloud too and use whichever is first.
+    const first = await Promise.race([mine.then((c) => c, () => null), sleep(2500).then(() => null)]);
+    if (first) return first;
+    mine.catch(() => {});
+    return Promise.any([mine, cloudClip(text, v)]).catch((e: any) => {
+      throw e?.errors?.[e.errors.length - 1] || e;
+    });
+  }
+  if (cloud) return cloudClip(text, v);
+  throw new Error(isOnline() ? 'The Natural voice is not set up on this device' : 'offline');
+}
+
+function fetchClip(text: string, persist = false, v: Voice = cloudVoice()!, pri = 0): Promise<Clip> {
   const key = `${v.provider}|${v.voice}|${v.style}|${text}`;
   const hit = clips.get(key);
   if (hit) return hit;
   const p = (async (): Promise<Clip> => {
-    if (v.provider === 'neural') {
-      const wav = await neuralSpeak(text, v.voice);
-      return { url: URL.createObjectURL(wav), starts: null };
-    }
     let stored: StoredClip | undefined;
     try {
       stored = await idbGet<StoredClip>(key, clipStore());
@@ -104,22 +149,18 @@ function fetchClip(text: string, persist = false, v: Voice = cloudVoice()!): Pro
       stored = undefined;
     }
     if (stored) return { url: URL.createObjectURL(new Blob([stored.bytes], { type: stored.mime })), starts: stored.starts };
-    if (!isOnline() || !server.ok()) throw new Error('offline');
-    const r = await api<{ audio: string; mime: string; starts: number[] | null }>('/api/tts', {
-      method: 'POST',
-      body: { text, provider: v.provider, voice: v.voice, style: v.style }
-    });
-    const bytes = Uint8Array.from(atob(r.audio), (c) => c.charCodeAt(0));
-    if (persist) {
+    const made = v.provider === 'neural' ? await naturalClip(text, v, pri) : await cloudClip(text, v);
+    // Natural voice audio is small, so it is always kept: replays are instant and nothing is paid for twice.
+    if (persist || v.provider === 'neural') {
       try {
-        await idbSet(key, { mime: r.mime, bytes: bytes.buffer, starts: r.starts } as StoredClip, clipStore());
+        await idbSet(key, made, clipStore());
       } catch {
         /* storage full */
       }
     }
-    return { url: URL.createObjectURL(new Blob([bytes], { type: r.mime })), starts: r.starts };
+    return { url: URL.createObjectURL(new Blob([made.bytes], { type: made.mime })), starts: made.starts };
   })();
-  p.catch(() => clips.delete(key));
+  p.then(() => ready.add(key), () => clips.delete(key));
   clips.set(key, p);
   if (clips.size > 60) {
     const oldest = clips.keys().next().value as string;
@@ -128,6 +169,72 @@ function fetchClip(text: string, persist = false, v: Voice = cloudVoice()!): Pro
   }
   return p;
 }
+
+/**
+ * The sentence that has to play now. If this computer is still making it after a moment,
+ * the cloud version (same voice) is asked too and whichever arrives first plays.
+ */
+async function urgentClip(text: string, v: Voice): Promise<Clip> {
+  const p = fetchClip(text, false, v, 0);
+  if (v.provider !== 'neural' || !(server.has('kokoro') && isOnline())) return p;
+  const first = await Promise.race([p.then((c) => c, () => null), sleep(1000).then(() => null)]);
+  if (first) return first;
+  behindUntil = Date.now() + 45_000;
+  return withCloud(text, v);
+}
+
+/** Races the cloud against this computer for one sentence; the faster one wins and is kept. */
+function withCloud(text: string, v: Voice): Promise<Clip> {
+  const key = `${v.provider}|${v.voice}|${v.style}|${text}`;
+  const local = clips.get(key) || fetchClip(text, false, v, 1);
+  if (ready.has(key)) return local;
+  const fromCloud = cloudClip(text, v).then(async (made) => {
+    try {
+      await idbSet(key, made, clipStore());
+    } catch {
+      /* storage full */
+    }
+    return { url: URL.createObjectURL(new Blob([made.bytes], { type: made.mime })), starts: made.starts } as Clip;
+  });
+  local.catch(() => {});
+  const race = Promise.any([local, fromCloud]).catch((e: any) => {
+    throw e?.errors?.[e.errors.length - 1] || e;
+  });
+  clips.set(key, race);
+  race.then(() => ready.add(key), () => clips.delete(key));
+  return race;
+}
+
+/** Saved audio for one sentence, for building audio packs. */
+export async function clipBytes(text: string, v: Voice = cloudVoice()!, pri = 1): Promise<StoredClip> {
+  const key = `${v.provider}|${v.voice}|${v.style}|${text}`;
+  try {
+    const s = await idbGet<StoredClip>(key, clipStore());
+    if (s) return s;
+  } catch {
+    /* fall through */
+  }
+  await fetchClip(text, true, v, pri);
+  const s = await idbGet<StoredClip>(key, clipStore());
+  if (!s) throw new Error('Could not save audio on this device. It may be out of space.');
+  return s;
+}
+
+/** Stores audio made on another device. */
+export async function saveClip(key: string, text: string, clip: StoredClip) {
+  await idbSet(`${key}|${text}`, clip, clipStore());
+}
+
+export async function hasClip(key: string, text: string): Promise<boolean> {
+  try {
+    return !!(await idbGet(`${key}|${text}`, clipStore()));
+  } catch {
+    return false;
+  }
+}
+
+export { naturalVoice };
+export type { StoredClip, Voice };
 
 /* ---------- player ---------- */
 export interface PlayerState {
@@ -194,6 +301,7 @@ class Player {
   play(index = this.s.index) {
     if (!this.sentences.length) return;
     this.stopAll();
+    clearPrefetch();
     const tok = ++this.token;
     this.setupMediaSession();
     this.set({ playing: true, error: null });
@@ -281,13 +389,15 @@ class Player {
   }
 
   private async speakCloud(i: number, tok: number) {
-    this.set({ engine: 'cloud', loading: true });
+    // Only say we're waiting if it's a real wait, not the normal step between sentences.
+    this.set({ engine: 'cloud' });
+    const waitTimer = setTimeout(() => tok === this.token && this.set({ loading: true }), 400);
     let clip: Clip | null = null;
     let used: Voice | null = null;
     let failure = '';
     for (const v of voiceChain()) {
       try {
-        clip = await fetchClip(this.sentences[i], false, v);
+        clip = await urgentClip(this.sentences[i], v);
         used = v;
         break;
       } catch (e: any) {
@@ -295,6 +405,7 @@ class Player {
       }
       if (tok !== this.token) return;
     }
+    clearTimeout(waitTimer);
     if (tok !== this.token) return;
     if (!clip || !used) {
       this.set({
@@ -327,8 +438,13 @@ class Player {
       return;
     }
     this.set({ loading: false });
-    const ahead = used.provider === 'neural' ? 2 : 3;
-    for (let k = 1; k <= ahead; k++) if (this.sentences[i + k]) fetchClip(this.sentences[i + k], false, used).catch(() => {});
+    // Keep several sentences ready ahead of the one playing, so there are no gaps.
+    const ahead = used.provider === 'neural' ? 8 : 3;
+    for (let k = 1; k <= ahead; k++) if (this.sentences[i + k]) fetchClip(this.sentences[i + k], false, used, k).catch(() => {});
+    // This computer fell behind recently: have the cloud help with the next few so there are no more pauses.
+    if (used.provider === 'neural' && Date.now() < behindUntil && server.has('kokoro') && isOnline()) {
+      for (let k = 1; k <= 3; k++) if (this.sentences[i + k]) withCloud(this.sentences[i + k], used).catch(() => {});
+    }
     const text = this.sentences[i];
     const tick = () => {
       if (tok !== this.token) return;
@@ -464,7 +580,7 @@ export async function downloadAudio(sentences: string[], onPct: (p: number) => v
         for (let attempt = 0; attempt < 3; attempt++) {
           try {
             clips.delete(key);
-            await fetchClip(text, true);
+            await fetchClip(text, true, cloudVoice()!, 5);
             break;
           } catch (e: any) {
             if (attempt === 2) throw e;

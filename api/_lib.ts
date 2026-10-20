@@ -40,6 +40,7 @@ export function features() {
     ai: !!process.env.ANTHROPIC_API_KEY,
     openai: !!process.env.OPENAI_API_KEY,
     elevenlabs: !!process.env.ELEVENLABS_API_KEY,
+    kokoro: !!process.env.DEEPINFRA_API_KEY,
     storage: !!store()
   };
 }

@@ -19,7 +19,7 @@ export function PlayerBar() {
       <div className="player" role="region" aria-label="Audio player">
         <div className="player-progress" style={{ width: `${pct * 100}%` }} aria-hidden="true" />
         <button className="player-title" onClick={() => go({ name: 'doc', id: p.docId!, tab: 'listen' })} disabled={onDoc} title="Open">
-          <span className="eyebrow">{p.loading ? 'Warming up the voice…' : p.playing ? 'Now reading' : 'Paused'}</span>
+          <span className="eyebrow">{p.loading ? 'Getting the audio ready…' : p.playing ? 'Now reading' : 'Paused'}</span>
           <span className="player-name">{p.title}</span>
         </button>
         <div className="player-controls">

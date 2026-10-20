@@ -1,3 +1,4 @@
+import { importAudioPack } from '../lib/audiopack';
 import { useMemo, useRef, useState } from 'react';
 import { Empty, Horizon, Icon, Sheet } from '../components/ui';
 import { addDoc, getState, removeDoc, useApp } from '../lib/store';
@@ -226,7 +227,27 @@ export function AddSheet({ open, onClose }: { open: boolean; onClose: () => void
     }
   }
 
-  const onFile = (f?: File | null) => f && run(() => importFile(f), `Reading ${f.name}…`);
+  const onFile = async (f?: File | null) => {
+    if (!f) return;
+    // A Rise audio file made on the computer: save its audio instead of adding a new piece.
+    if (/\.zip$/i.test(f.name)) {
+      setError('');
+      setBusy('Adding the audio…');
+      try {
+        const r = await importAudioPack(f);
+        if (r.onDevice) {
+          onClose();
+          go({ name: 'doc', id: r.docId, tab: 'listen' });
+        } else setError(`Saved audio for "${r.title}". It will play once that piece syncs to this device.`);
+      } catch (e: any) {
+        setError(e.message);
+      } finally {
+        setBusy('');
+      }
+      return;
+    }
+    run(() => importFile(f), `Reading ${f.name}…`);
+  };
 
   return (
     <Sheet open={open} onClose={onClose} title="Add to your library" wide>
@@ -280,7 +301,7 @@ export function AddSheet({ open, onClose }: { open: boolean; onClose: () => void
             <strong>Drop a file here</strong> or choose one
           </p>
           <p className="hint">PDF, EPUB ebooks, Word (.docx), text and Markdown. Files from Google Drive work too: download them first, or use the link option for Google Docs.</p>
-          <input ref={fileRef} id="add-file" type="file" accept=".pdf,.epub,.docx,.txt,.md,.markdown,.html,.htm" hidden onChange={(e) => onFile(e.target.files?.[0])} />
+          <input ref={fileRef} id="add-file" type="file" accept=".pdf,.epub,.docx,.txt,.md,.markdown,.html,.htm,.zip" hidden onChange={(e) => onFile(e.target.files?.[0])} />
           <button className="btn btn-sun" onClick={() => fileRef.current?.click()} disabled={!!busy}>
             Choose a file
           </button>

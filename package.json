@@ -12,6 +12,7 @@
     "icons": "node scripts/icons.mjs"
   },
   "dependencies": {
+    "@breezystack/lamejs": "^1.2.7",
     "@huggingface/transformers": "^3.7.6",
     "@mlc-ai/web-llm": "^0.2.79",
     "@mozilla/readability": "^0.5.0",

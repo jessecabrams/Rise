@@ -4,6 +4,8 @@ export interface Features {
   ai: boolean;
   openai: boolean;
   elevenlabs: boolean;
+  /** The Natural voice in the cloud (Kokoro on DeepInfra). */
+  kokoro: boolean;
   storage: boolean;
 }
 
@@ -21,7 +23,7 @@ let snapshot: ServerState = {
   reachable: false,
   passcode: false,
   authed: false,
-  features: { ai: false, openai: false, elevenlabs: false, storage: false }
+  features: { ai: false, openai: false, elevenlabs: false, kokoro: false, storage: false }
 };
 const subs = new Set<() => void>();
 function set(patch: Partial<ServerState>) {
@@ -38,7 +40,7 @@ export const server = {
     return snapshot.reachable && (!snapshot.passcode || snapshot.authed);
   },
   has(f: keyof Features): boolean {
-    return server.ok() && snapshot.features[f];
+    return server.ok() && !!snapshot.features?.[f];
   },
   async probe(): Promise<ServerState> {
     try {

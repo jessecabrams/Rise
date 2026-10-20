@@ -48,38 +48,135 @@ export function useNatural(): NaturalState {
 
 export const neuralReady = () => state.status === 'ready';
 
-let worker: Worker | null = null;
-let seq = 0;
-const pending = new Map<number, { res: (v: any) => void; rej: (e: Error) => void; onProgress?: (p: any) => void }>();
+/* ---------- a small pool of voice workers ---------- */
+// On a computer, two or three workers run side by side so the next sentences are ready before they're needed.
+// On a phone, one is all it can manage.
 
-function w(): Worker {
-  if (worker) return worker;
-  worker = new Worker(new URL('../workers/tts.worker.ts', import.meta.url), { type: 'module' });
-  worker.onmessage = (e) => {
-    const m = e.data;
-    const p = pending.get(m.id);
-    if (!p) return;
-    if (m.type === 'progress') p.onProgress?.(m);
-    else {
-      pending.delete(m.id);
-      m.type === 'done' ? p.res(m.result) : p.rej(new Error(m.error || 'The Natural voice stopped unexpectedly.'));
-    }
-  };
-  worker.onerror = (e) => {
-    for (const p of pending.values()) p.rej(new Error(e.message || 'The Natural voice could not start.'));
-    pending.clear();
-    worker = null;
-  };
-  return worker;
+/** True on iPhone and iPad, where the Natural voice is usually too heavy to run. */
+export const isIOS = () => typeof navigator !== 'undefined' && (/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+
+const POOL = (() => {
+  if (typeof navigator === 'undefined' || isIOS() || /Android/i.test(navigator.userAgent)) return 1;
+  const cores = navigator.hardwareConcurrency || 4;
+  return cores >= 8 ? 3 : cores >= 4 ? 2 : 1;
+})();
+
+export interface NeuralClip {
+  mime: string;
+  bytes: ArrayBuffer;
 }
 
-function call<T>(msg: any, onProgress?: (p: any) => void): Promise<T> {
-  const id = ++seq;
+interface Job {
+  seq: number;
+  pri: number;
+  msg: any;
+  res: (v: any) => void;
+  rej: (e: Error) => void;
+  onProgress?: (p: any) => void;
+  timeout?: number;
+}
+
+interface Slot {
+  w: Worker;
+  busy: Job | null;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+const slots: Slot[] = [];
+const queue: Job[] = [];
+let seq = 0;
+
+function spawn(i: number): Slot {
+  const w = new Worker(new URL('../workers/tts.worker.ts', import.meta.url), { type: 'module' });
+  const slot: Slot = { w, busy: null, timer: null };
+  w.onmessage = (e) => {
+    const m = e.data;
+    const job = slot.busy;
+    if (!job || m.id !== job.seq) return;
+    if (m.type === 'progress') return job.onProgress?.(m);
+    if (slot.timer) clearTimeout(slot.timer);
+    slot.busy = null;
+    m.type === 'done' ? job.res(m.result) : job.rej(new Error(m.error || 'The Natural voice stopped unexpectedly.'));
+    pump();
+  };
+  w.onerror = (e) => {
+    const job = slot.busy;
+    restart(i, e.message || 'The Natural voice could not start.');
+    job?.rej(new Error(e.message || 'The Natural voice could not start.'));
+  };
+  slots[i] = slot;
+  return slot;
+}
+
+function restart(i: number, reason: string) {
+  const s = slots[i];
+  if (!s) return;
+  if (s.timer) clearTimeout(s.timer);
+  s.w.terminate();
+  const job = s.busy;
+  s.busy = null;
+  spawn(i);
+  job?.rej(new Error(reason));
+  pump();
+}
+
+function pump() {
+  for (let i = 0; i < slots.length; i++) {
+    const s = slots[i];
+    if (!s || s.busy || !queue.length) continue;
+    queue.sort((a, b) => a.pri - b.pri || a.seq - b.seq);
+    const job = queue.shift()!;
+    s.busy = job;
+    if (job.timeout) s.timer = setTimeout(() => restart(i, job.timeout === TEST_MS ? SLOW : 'The Natural voice took too long.'), job.timeout);
+    s.w.postMessage({ ...job.msg, id: job.seq });
+  }
+}
+
+function run<T>(msg: any, pri: number, opts: { onProgress?: (p: any) => void; timeout?: number; size?: number } = {}): Promise<T> {
+  const want = opts.size ?? POOL;
+  for (let i = 0; i < want; i++) if (!slots[i]) spawn(i);
   return new Promise<T>((res, rej) => {
-    pending.set(id, { res, rej, onProgress });
-    w().postMessage({ ...msg, id });
+    queue.push({ seq: ++seq, pri, msg, res, rej, onProgress: opts.onProgress, timeout: opts.timeout });
+    pump();
   });
 }
+
+/** How many sentences this device is still working through, per worker. */
+export function localBacklog(): number {
+  const busy = slots.filter((s) => s?.busy).length;
+  return (queue.length + busy) / Math.max(1, POOL);
+}
+
+/** Drops sentences queued ahead of time, for example after you jump to another chapter. */
+export function clearPrefetch() {
+  for (let k = queue.length - 1; k >= 0; k--) {
+    if (queue[k].pri > 0) queue.splice(k, 1)[0].rej(new Error('skipped'));
+  }
+}
+
+function stopAll(reason: string) {
+  for (const j of queue.splice(0)) j.rej(new Error(reason));
+  for (let i = 0; i < slots.length; i++) {
+    const s = slots[i];
+    if (!s) continue;
+    if (s.timer) clearTimeout(s.timer);
+    s.w.terminate();
+    s.busy?.rej(new Error(reason));
+  }
+  slots.length = 0;
+}
+
+let warmed: Promise<unknown> | null = null;
+/** Loads the voice in the background so the first sentence starts right away. */
+export function prewarmNatural() {
+  if (!neuralReady() || isIOS() || warmed) return;
+  warmed = Promise.all(Array.from({ length: POOL }, () => run({ type: 'load' }, -1).catch(() => {}))).catch(() => {});
+}
+
+/** Can this device make Natural voice audio itself, fast enough to keep up? */
+export const localNatural = () => neuralReady() && !isIOS();
+
+const TEST_MS = 60_000;
 
 const VOICE_URL = (id: string) => `https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/voices/${id}.bin`;
 
@@ -98,32 +195,6 @@ async function cacheVoices(onEach: (n: number) => void) {
   }
 }
 
-function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
-  return new Promise<T>((res, rej) => {
-    const t = setTimeout(() => {
-      resetWorker(msg);
-      rej(new Error(msg));
-    }, ms);
-    p.then(
-      (v) => {
-        clearTimeout(t);
-        res(v);
-      },
-      (e) => {
-        clearTimeout(t);
-        rej(e);
-      }
-    );
-  });
-}
-
-function resetWorker(reason: string) {
-  worker?.terminate();
-  worker = null;
-  for (const p of pending.values()) p.rej(new Error(reason));
-  pending.clear();
-}
-
 const SLOW = 'The Natural voice downloaded, but this device runs it too slowly to use. On iPhone, Apple\'s Premium voices are the better choice. The Natural voice works well on a Mac.';
 
 export async function downloadNatural() {
@@ -131,17 +202,24 @@ export async function downloadNatural() {
   set({ status: 'downloading', pct: 0, error: '', stage: 'Downloading the voice model…' });
   const files = new Map<string, number>();
   try {
-    await call({ type: 'load' }, (p) => {
-      files.set(p.file, p.loaded);
-      let loaded = 0;
-      for (const v of files.values()) loaded += v;
-      set({ pct: Math.min(0.85, loaded / (NATURAL_MB * 1e6)) });
-    });
+    await run(
+      { type: 'load' },
+      -1,
+      {
+        size: 1,
+        onProgress: (p) => {
+          files.set(p.file, p.loaded);
+          let loaded = 0;
+          for (const v of files.values()) loaded += v;
+          set({ pct: Math.min(0.85, loaded / (NATURAL_MB * 1e6)) });
+        }
+      }
+    );
     set({ pct: 0.86, stage: 'Downloading the six voices…' });
     await cacheVoices((n) => set({ pct: 0.86 + (n / NATURAL_VOICES.length) * 0.08 }));
     set({ pct: 0.95, stage: 'Testing it on this device…' });
     const started = performance.now();
-    await withTimeout(call<Blob>({ type: 'speak', text: 'Ready.', voice: 'af_heart' }), 60_000, SLOW);
+    await run({ type: 'speak', text: 'Ready.', voice: 'af_heart' }, -1, { size: 1, timeout: TEST_MS });
     const ms = performance.now() - started;
     try {
       localStorage.setItem(FLAG, '1');
@@ -160,12 +238,9 @@ export async function downloadNatural() {
   }
 }
 
-/** True on iPhone and iPad, where the Natural voice is usually too heavy to run. */
-export const isIOS = () => typeof navigator !== 'undefined' && (/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
-
 /** Stops a download or test that is taking too long. */
 export function stopNatural() {
-  resetWorker('Stopped.');
+  stopAll('Stopped.');
   set({ status: 'none', pct: 0, error: '', stage: '' });
 }
 
@@ -176,16 +251,15 @@ export async function removeNatural() {
     /* ignore */
   }
   await purgeCache(/Kokoro/i, ['kokoro-voices']);
-  worker?.terminate();
-  worker = null;
+  stopAll('Removed.');
+  warmed = null;
   set({ status: 'none', pct: 0, error: '', stage: '' });
 }
 
-/** Speaks one sentence with the Natural voice. Returns WAV audio. */
-export function neuralSpeak(text: string, voice: string): Promise<Blob> {
+/** Makes one sentence of Natural voice audio on this device. `pri` 0 is needed now; higher numbers are read-ahead. */
+export function neuralSpeak(text: string, voice: string, pri = 0): Promise<NeuralClip> {
   if (!neuralReady()) return Promise.reject(new Error('The Natural voice is not downloaded.'));
-  // Never let a stuck sentence freeze playback: give up and fall back to another voice.
-  return withTimeout(call<Blob>({ type: 'speak', text, voice }), 45_000, 'The Natural voice took too long.');
+  return run<NeuralClip>({ type: 'speak', text, voice }, pri, { timeout: 45_000 });
 }
 
 /** Deletes cached model files whose URL matches, and whole caches by name. */

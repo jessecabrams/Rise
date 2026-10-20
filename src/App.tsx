@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { boot, getState, patchDoc, pull, saveNow, useApp } from './lib/store';
 import { go, useView } from './lib/nav';
 import { player } from './lib/speech';
+import { prewarmNatural } from './lib/localtts';
 import { award, dayKey, levelInfo } from './lib/game';
 import { server, useServer } from './lib/api';
 import { onOnline, useOnline } from './lib/online';
@@ -22,6 +23,14 @@ export default function App() {
   const streak = useApp((s) => s.game.streak);
   const [ready, setReady] = useState(false);
   const online = useOnline();
+  const provider = useApp((s) => s.settings.provider);
+
+  // Start the Natural voice in the background, so pressing play doesn't wait for it.
+  useEffect(() => {
+    if (provider !== 'neural') return;
+    const t = setTimeout(prewarmNatural, 1500);
+    return () => clearTimeout(t);
+  }, [provider]);
 
   useEffect(() => {
     boot().finally(() => {

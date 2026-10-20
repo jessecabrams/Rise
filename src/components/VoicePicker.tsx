@@ -77,14 +77,21 @@ export function VoicePicker() {
         onChange={(p) => choose({ provider: p })}
         options={[
           { value: 'device', label: 'Device' },
-          { value: 'neural', label: 'Natural', disabled: natural.status !== 'ready' },
+          { value: 'neural', label: 'Natural' },
           { value: 'openai', label: 'Studio', disabled: !(ready && srv.features.openai) },
           { value: 'elevenlabs', label: 'Premium', disabled: !(ready && srv.features.elevenlabs) }
         ]}
       />
       <p className="hint">
         {s.provider === 'device' && (isIOS() ? 'Free voices built into this device.' : 'Free voices built into this device. On a Mac, Chrome also lists any Premium voices you download in System Settings › Accessibility › Spoken Content.')}
-        {s.provider === 'neural' && 'Lifelike voices that run on this device. Free, private and they work offline. Slower to start on phones.'}
+        {s.provider === 'neural' &&
+          (natural.status === 'ready' && !isIOS()
+            ? `Lifelike voices made on this computer. Free and private, and audio is saved so replays work offline.${ready && srv.features.kokoro ? ' If this computer falls behind, the cloud version fills in.' : ''}`
+            : ready && srv.features.kokoro
+              ? 'Lifelike voices from the cloud, about $1 for every 18 hours of listening. Anything you hear or download is saved on this device and plays offline.'
+              : isIOS()
+                ? 'Plays audio made on your computer (open a piece › Download › Make audio for iPhone). For the voice everywhere, add the cloud version in Settings.'
+                : 'Download the Natural voice in Settings › Offline to use it here.')}
         {s.provider === 'openai' && 'Natural studio voices. About a penny per few minutes of listening.'}
         {s.provider === 'elevenlabs' && 'The most lifelike voices, with exact word timing. Uses your ElevenLabs credits.'}
         {!(ready && srv.features.openai) && s.provider === 'device' && ' Studio and Premium voices switch on once their keys are added to your Rise server.'}

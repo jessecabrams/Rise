@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { ErrorNote, Horizon, Icon, Toggle } from '../components/ui';
 import { hasIndex, prepareOffline, removeIndex, type PrepProgress } from '../lib/offline';
-import { audioEstimateMB, removeAudio, sayChunks, voiceKey } from '../lib/speech';
+import { audioEstimateMB, canDownloadAudio, removeAudio, sayChunks, voiceKey } from '../lib/speech';
+import { importAudioPack, makeAudioPacks, packEstimateMB, saveFile, type PackFile, type PackProgress } from '../lib/audiopack';
+import { localNatural, NATURAL_VOICES } from '../lib/localtts';
 import { ANSWER_PACK_MB, downloadAnswerPack, packReady, removeAnswerPack, usePack } from '../lib/localml';
 import { COACH_MODELS, downloadCoach, removeCoach, useCoach, webgpuSupported } from '../lib/localllm';
 import { NATURAL_MB, downloadNatural, isIOS, removeNatural, stopNatural, useNatural } from '../lib/localtts';
@@ -23,7 +25,8 @@ export function DocOffline({ ctx }: { ctx: DocCtx }) {
   const banked = chs.filter((c) => ctx.body.bank?.[c.index]?.length).length;
   const questions = Object.values(ctx.body.bank || {}).reduce((a, l) => a + l.length, 0);
   const vk = voiceKey();
-  const [audio, setAudio] = useState(!!vk && !!meta?.offline?.audio);
+  const canDl = canDownloadAudio();
+  const [audio, setAudio] = useState(!!vk && canDl && !!meta?.offline?.audio);
   const [prog, setProg] = useState<PrepProgress | null>(null);
   const [error, setError] = useState('');
   const [indexed, setIndexed] = useState(false);
@@ -40,7 +43,7 @@ export function DocOffline({ ctx }: { ctx: DocCtx }) {
     setError('');
     setProg({ label: 'Starting…', pct: 0 });
     try {
-      await prepareOffline(ctx, { audio: audio && !!vk }, setProg, cancel);
+      await prepareOffline(ctx, { audio: audio && !!vk && canDl }, setProg, cancel);
     } catch (e: any) {
       setError(e.message || 'The download stopped. Try again.');
     } finally {
@@ -67,7 +70,7 @@ export function DocOffline({ ctx }: { ctx: DocCtx }) {
         {row(natural.status === 'ready', 'Feedback and answers read aloud', natural.status === 'ready' ? 'Natural voice' : 'device voice')}
         {row(pack.status === 'ready', 'Offline grading and voice answers', pack.status === 'ready' ? 'on this device' : 'set up once in Settings')}
       </ul>
-      {vk && (
+      {vk && canDl && (
         <Toggle
           id="dl-audio"
           checked={audio}
@@ -98,6 +101,7 @@ export function DocOffline({ ctx }: { ctx: DocCtx }) {
       )}
       {!online && <p className="hint warn">You're offline. Downloading needs a connection.</p>}
       {error && <ErrorNote message={error} />}
+      <AudioForPhone ctx={ctx} />
       {audioReady && !prog && (
         <button
           className="link-btn"
@@ -287,3 +291,122 @@ export function OfflineSettings() {
   );
 }
 
+
+/** Natural voice audio: made free on a computer, carried to the phone as a file. */
+function AudioForPhone({ ctx }: { ctx: DocCtx }) {
+  const meta = useApp((s) => s.docs[ctx.id]);
+  const voice = useApp((s) => s.settings.neuralVoice) || 'af_heart';
+  const [which, setWhich] = useState<string>('all');
+  const [prog, setProg] = useState<PackProgress | null>(null);
+  const [files, setFiles] = useState<PackFile[]>([]);
+  const [error, setError] = useState('');
+  const [note, setNote] = useState('');
+  const cancel = useRef(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const vname = NATURAL_VOICES.find((v) => v.id === voice)?.name || voice;
+
+  if (!localNatural()) {
+    // On the phone: bring in a file made on the computer.
+    return (
+      <div className="offline-card stack">
+        <h3>Natural voice audio from your computer</h3>
+        <p className="hint">On your computer, open this piece, tap the download button and choose Make audio for iPhone. Send the file here with AirDrop or iCloud Drive, then add it below.</p>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".zip,application/zip"
+          hidden
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            e.target.value = '';
+            if (!f) return;
+            setError('');
+            setNote('Adding the audio…');
+            try {
+              const r = await importAudioPack(f, (p) => setNote(`Adding the audio… ${Math.round(p * 100)}%`));
+              setNote(`Added ${r.clips} sentences of audio${r.parts > 1 ? ` (file ${r.part} of ${r.parts})` : ''}. The Natural voice is now your voice.`);
+            } catch (err: any) {
+              setNote('');
+              setError(err.message);
+            }
+          }}
+        />
+        <button className="btn btn-ghost" onClick={() => fileRef.current?.click()}>
+          <Icon name="upload" size={18} /> Add audio file
+        </button>
+        {note && <p className="hint">{note}</p>}
+        {error && <ErrorNote message={error} />}
+      </div>
+    );
+  }
+
+  const chosen = which === 'all' ? [] : ctx.chs.filter((c) => String(c.index) === which);
+  const words = which === 'all' ? meta?.wordCount || 0 : Math.round((chosen[0]?.chars || 0) / 5.5);
+
+  async function make() {
+    cancel.current = false;
+    setError('');
+    setFiles([]);
+    setProg({ done: 0, total: 1, label: 'Starting the Natural voice…' });
+    try {
+      const out = await makeAudioPacks({ id: ctx.id, title: ctx.title, s: ctx.s, body: ctx.bodyRef.current }, chosen, setProg, cancel);
+      setFiles(out);
+      if (out.length === 1) saveFile(out[0]);
+    } catch (e: any) {
+      if (e.message !== 'Stopped.') setError(e.message || 'Making the audio stopped. Try again.');
+    } finally {
+      setProg(null);
+    }
+  }
+
+  return (
+    <div className="offline-card stack">
+      <h3>Make audio for iPhone</h3>
+      <p className="hint">
+        This computer reads the piece in the Natural voice ({vname}) for free and saves it as a file. Put the file on your iPhone and it plays there with no cost and no
+        connection.
+      </p>
+      {ctx.chs.length > 1 && (
+        <label className="field" htmlFor="pack-which">
+          <span>What to include</span>
+          <select id="pack-which" value={which} onChange={(e) => setWhich(e.target.value)} disabled={!!prog}>
+            <option value="all">The whole piece</option>
+            {ctx.chs.map((c) => (
+              <option key={c.index} value={String(c.index)}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <p className="hint tabular">About {packEstimateMB(words)} MB. Sentences you've already heard are reused, so it gets faster each time.</p>
+      {prog ? (
+        <div className="stack" role="status">
+          <span className="hint">{prog.label}</span>
+          <Horizon pct={prog.done / Math.max(1, prog.total)} label="Making audio" />
+          <button className="btn btn-ghost sm" onClick={() => (cancel.current = true)}>
+            Stop
+          </button>
+        </div>
+      ) : (
+        <button className="btn btn-sun" onClick={make}>
+          <Icon name="wave" size={18} /> Make audio for iPhone
+        </button>
+      )}
+      {error && <ErrorNote message={error} />}
+      {files.length > 0 && (
+        <div className="stack">
+          <p className="hint">
+            {files.length === 1 ? 'Saved to your Downloads folder.' : `Ready in ${files.length} files. Save each one.`} Then AirDrop it to your iPhone (or put it in iCloud
+            Drive). On the iPhone, open this piece in Rise, tap the download button, and choose Add audio file.
+          </p>
+          {files.map((f) => (
+            <button key={f.name} className="btn btn-ghost sm" onClick={() => saveFile(f)}>
+              <Icon name="download" size={16} /> Save {f.name} ({f.mb} MB)
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

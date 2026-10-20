@@ -5,6 +5,8 @@ import { VitePWA } from 'vite-plugin-pwa';
 export default defineConfig(({ mode }) => ({
   define: { __RISE_BUILD__: JSON.stringify(process.env.RISE_BUILD || new Date().toISOString().slice(0, 16).replace('T', ' ')) },
   base: mode === 'preview' ? './' : '/',
+  // Test builds only: a stand-in for the voice model, so the voice pipeline can be tested without downloading it.
+  resolve: process.env.RISE_FAKE_KOKORO ? { alias: { 'kokoro-js': process.env.RISE_FAKE_KOKORO } } : undefined,
   build: {
     outDir: mode === 'preview' ? 'dist-preview' : 'dist',
     chunkSizeWarningLimit: 7000,
