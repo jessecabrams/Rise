@@ -112,33 +112,42 @@ export async function prepareOffline(ctx: MapCtx, opts: PrepOptions, onProgress:
   let done = 0;
   const tick = (label: string) => onProgress({ label, pct: (done / steps) * aiWeight });
 
-  for (const ch of chs) {
-    if (cancel.current) return;
-    if (!ctx.bodyRef.current.map?.[ch.index]) {
-      tick(`Mapping ideas in ${chs.length > 1 ? `chapter ${ch.index + 1}` : 'your piece'}…`);
-      await buildIdeas(ctx, ch);
-    }
-    done++;
-  }
-  for (const ch of chs) {
-    if (cancel.current) return;
+  const where = (ch: (typeof chs)[number]) => (chs.length > 1 ? `chapter ${ch.index + 1}` : 'your piece');
+  // Several chapters at once: the coach can work on three in parallel.
+  const together = async (fn: (ch: (typeof chs)[number]) => Promise<void>) => {
+    let next = 0;
+    const lane = async () => {
+      while (next < chs.length && !cancel.current) {
+        const ch = chs[next++];
+        await fn(ch);
+        done++;
+      }
+    };
+    await Promise.all([lane(), lane(), lane()]);
+  };
+  await together(async (ch) => {
+    if (ctx.bodyRef.current.map?.[ch.index]) return;
+    tick(`Mapping ideas in ${where(ch)}…`);
+    await buildIdeas(ctx, ch);
+  });
+  if (cancel.current) return;
+  await together(async (ch) => {
     const cm = ctx.bodyRef.current.map?.[ch.index];
-    if (cm && !ctx.bodyRef.current.bank?.[ch.index]?.length) {
-      tick(`Writing offline questions for ${chs.length > 1 ? `chapter ${ch.index + 1}` : 'your piece'}…`);
-      const r = await runAi<{ questions: Omit<QuizQuestion, 'id'>[] }>('bank', {
-        title: ctx.title,
-        chapter: ch.title,
-        text: sectionText(ctx.s.sentences, ch),
-        ideas: cm.ideas.map(({ id, title, summary }) => ({ id, title, summary }))
-      });
-      const valid = new Set(cm.ideas.map((i) => i.id));
-      const qs: QuizQuestion[] = (r.questions || [])
-        .filter((q) => q.question && q.ideaId && valid.has(q.ideaId))
-        .map((q) => ({ ...q, id: uid(), keyPoints: q.keyPoints || [], idealAnswer: q.idealAnswer || '' }));
-      ctx.update((b) => ({ ...b, bank: { ...(b.bank || {}), [ch.index]: qs } }));
-    }
-    done++;
-  }
+    if (!cm || ctx.bodyRef.current.bank?.[ch.index]?.length) return;
+    tick(`Writing offline questions for ${where(ch)}…`);
+    const r = await runAi<{ questions: Omit<QuizQuestion, 'id'>[] }>('bank', {
+      title: ctx.title,
+      chapter: ch.title,
+      text: sectionText(ctx.s.sentences, ch),
+      ideas: cm.ideas.map(({ id, title, summary }) => ({ id, title, summary }))
+    });
+    const valid = new Set(cm.ideas.map((i) => i.id));
+    const qs: QuizQuestion[] = (r.questions || [])
+      .filter((q) => q.question && q.ideaId && valid.has(q.ideaId))
+      .map((q) => ({ ...q, id: uid(), keyPoints: q.keyPoints || [], idealAnswer: q.idealAnswer || '' }));
+    ctx.update((b) => ({ ...b, bank: { ...(b.bank || {}), [ch.index]: qs } }));
+  });
+  if (cancel.current) return;
   onProgress({ label: 'Indexing for offline search…', pct: aiWeight });
   if (packReady()) {
     await buildIndex(ctx.id, ctx.s.sentences, (p) => onProgress({ label: 'Indexing for offline search…', pct: aiWeight + p * (1 - audioWeight - aiWeight) }));

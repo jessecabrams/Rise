@@ -79,7 +79,7 @@ export async function makeAudioPacks(
       onProgress({ done, total: texts.length, label: `Making audio: ${done} of ${texts.length} sentences${done > 5 && left > 0 ? `, about ${left} min left` : ''}` });
     }
   };
-  await Promise.all([work(), work(), work(), work()]);
+  await Promise.all(Array.from({ length: 8 }, () => work()));
   if (cancel.current) throw new Error('Stopped.');
 
   // Split into files of about 60 MB.

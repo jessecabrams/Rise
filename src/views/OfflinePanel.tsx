@@ -75,7 +75,7 @@ export function DocOffline({ ctx }: { ctx: DocCtx }) {
           id="dl-audio"
           checked={audio}
           onChange={setAudio}
-          label="Include studio voice audio"
+          label="Include voice audio"
           hint={`About ${audioEstimateMB(meta?.wordCount || 0) + 2} MB for the reading and the quiz questions. Without it, ${natural.status === 'ready' ? 'the Natural voice' : 'your device voice'} reads offline.`}
         />
       )}
@@ -296,6 +296,7 @@ export function OfflineSettings() {
 function AudioForPhone({ ctx }: { ctx: DocCtx }) {
   const meta = useApp((s) => s.docs[ctx.id]);
   const voice = useApp((s) => s.settings.neuralVoice) || 'af_heart';
+  const where = useApp((s) => s.settings.naturalWhere);
   const [which, setWhich] = useState<string>('all');
   const [prog, setProg] = useState<PackProgress | null>(null);
   const [files, setFiles] = useState<PackFile[]>([]);
@@ -363,8 +364,8 @@ function AudioForPhone({ ctx }: { ctx: DocCtx }) {
     <div className="offline-card stack">
       <h3>Make audio for iPhone</h3>
       <p className="hint">
-        This computer reads the piece in the Natural voice ({vname}) for free and saves it as a file. Put the file on your iPhone and it plays there with no cost and no
-        connection.
+        Saves the piece in the Natural voice ({vname}) as a file. Put the file on your iPhone and it plays there with no connection.{' '}
+        {where === 'device' ? 'Made on this computer for free, which is slower.' : 'Made in the cloud, which is quick: about 60¢ for a long book.'}
       </p>
       {ctx.chs.length > 1 && (
         <label className="field" htmlFor="pack-which">
