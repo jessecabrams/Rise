@@ -81,10 +81,12 @@ export function Doc({ id, tab, focus, nonce }: { id: string; tab: DocTab; focus?
     crumb(`${r.sentences.length} sentences, ${r.paras.length} paragraphs`);
     return r;
   }, [text, id]);
-  const startsKey = meta?.chapterStarts?.join(',') || '';
+  // Chapters picked by hand are shared with everyone (older picks were saved per person).
+  const starts = body?.chapterStarts !== undefined ? body.chapterStarts : meta?.chapterStarts;
+  const startsKey = starts?.join(',') || '';
   const chs = useMemo(() => {
     if (!s) return [];
-    const r = chapters(s, meta?.title || '', meta?.chapterStarts);
+    const r = chapters(s, meta?.title || '', starts);
     crumb(`${r.length} chapters`);
     return r;
   }, [s, meta?.title, startsKey]);
@@ -157,7 +159,18 @@ export function Doc({ id, tab, focus, nonce }: { id: string; tab: DocTab; focus?
         </button>
       </header>
       <Sheet open={chaptersOpen} onClose={() => setChaptersOpen(false)} title="Chapters">
-        {ctx && <ChaptersPanel id={id} title={meta.title} s={ctx.s} chs={chs} onClose={() => setChaptersOpen(false)} />}
+        {ctx && <ChaptersPanel
+            id={id}
+            title={meta.title}
+            s={ctx.s}
+            chs={chs}
+            starts={starts || null}
+            onStarts={(st) => {
+              update((b) => ({ ...b, chapterStarts: st }));
+              patchDoc(id, (d) => delete d.chapterStarts);
+            }}
+            onClose={() => setChaptersOpen(false)}
+          />}
       </Sheet>
       <Sheet open={offlineOpen} onClose={() => setOfflineOpen(false)} title="Use offline">
         {ctx ? <DocOffline ctx={ctx} /> : <p className="hint">Loading…</p>}

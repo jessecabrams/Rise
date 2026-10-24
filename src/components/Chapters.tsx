@@ -10,11 +10,13 @@ interface Props {
   title: string;
   s: Structured;
   chs: Chapter[];
+  starts: number[] | null;
+  onStarts: (starts: number[] | null) => void;
   onClose: () => void;
 }
 
 /** Jump to any chapter, and choose by hand which headings count as chapters. */
-export function ChaptersPanel({ id, title, s, chs, onClose }: Props) {
+export function ChaptersPanel({ id, title, s, chs, starts, onStarts, onClose }: Props) {
   const p = usePlayer();
   const meta = useApp((st) => st.docs[id]);
   const rate = useApp((st) => st.settings.rate);
@@ -29,7 +31,7 @@ export function ChaptersPanel({ id, title, s, chs, onClose }: Props) {
     go({ name: 'doc', id, tab: 'listen' });
   };
 
-  if (editing) return <EditChapters id={id} s={s} chs={chs} onDone={() => setEditing(false)} />;
+  if (editing) return <EditChapters s={s} chs={chs} starts={starts} onStarts={onStarts} onDone={() => setEditing(false)} />;
 
   const prev = cur && chs[cur.index - 1];
   const next = cur && chs[cur.index + 1];
@@ -95,19 +97,15 @@ export function ChaptersPanel({ id, title, s, chs, onClose }: Props) {
   );
 }
 
-function EditChapters({ id, s, chs, onDone }: { id: string; s: Structured; chs: Chapter[]; onDone: () => void }) {
-  const meta = useApp((st) => st.docs[id]);
+function EditChapters({ s, chs, starts, onStarts, onDone }: { s: Structured; chs: Chapter[]; starts: number[] | null; onStarts: (s: number[] | null) => void; onDone: () => void }) {
   const hs = useMemo(() => headings(s), [s]);
-  const [picked, setPicked] = useState<Set<number>>(() => new Set(meta?.chapterStarts?.length ? meta.chapterStarts : chs.map((c) => c.start)));
+  const [picked, setPicked] = useState<Set<number>>(() => new Set(starts?.length ? starts : chs.map((c) => c.start)));
   const [showAll, setShowAll] = useState(false);
   const minLevel = hs.length ? Math.min(...hs.map((h) => h.level)) : 1;
   const list = showAll ? hs : hs.filter((h) => h.level <= minLevel + 1 || picked.has(h.start));
 
   const save = (starts: number[] | undefined) => {
-    patchDoc(id, (d) => {
-      if (starts?.length) d.chapterStarts = starts;
-      else delete d.chapterStarts;
-    });
+    onStarts(starts?.length ? starts : null);
     onDone();
   };
 
@@ -156,7 +154,7 @@ function EditChapters({ id, s, chs, onDone }: { id: string; s: Structured; chs: 
           Cancel
         </button>
       </div>
-      {meta?.chapterStarts?.length ? (
+      {starts?.length ? (
         <button className="link-btn" onClick={() => save(undefined)}>
           Reset to automatic
         </button>

@@ -1,4 +1,4 @@
-import { BULK, clipBytes, naturalVoice, saveClip, sayChunks } from './speech';
+import { BULK, clipBytes, downloadAudio, naturalVoice, saveClip, sayChunks } from './speech';
 import { getState, patchDoc, setSettings } from './store';
 import type { Chapter, Structured } from './text';
 import type { DocBody } from './types';
@@ -64,10 +64,22 @@ export async function makeAudioPacks(
     if (all || chs.some((c) => String(c.index) === k)) for (const q of qs) sayChunks(q.question).forEach(add);
   }
 
+  const started = performance.now();
+  // Fast path: fetch everything missing in batches first (when the Natural voice is your current voice).
+  if (getState().settings.provider === 'neural') {
+    await downloadAudio(
+      texts,
+      (f) => {
+        const sec = f > 0.03 ? ((performance.now() - started) / 1000 / f) * (1 - f) : 0;
+        onProgress({ done: Math.round(f * texts.length), total: texts.length, label: `Making audio: ${Math.round(f * 100)}%${sec > 60 ? `, about ${Math.round(sec / 60)} min left` : ''}` });
+      },
+      cancel
+    );
+    if (cancel.current) throw new Error('Stopped.');
+  }
   const got: { t: string; mime: string; bytes: ArrayBuffer }[] = new Array(texts.length);
   let next = 0;
   let done = 0;
-  const started = performance.now();
   const work = async () => {
     while (next < texts.length && !cancel.current) {
       const i = next++;

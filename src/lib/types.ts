@@ -96,6 +96,8 @@ export interface DocBody {
   bank?: Record<string, QuizQuestion[]>;
   pending?: PendingReview[];
   reviews?: CoachReview[];
+  /** Hand-picked chapter starts, shared by everyone. null means automatic. */
+  chapterStarts?: number[] | null;
 }
 
 export interface QuizQuestion {

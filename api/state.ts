@@ -13,8 +13,8 @@ function db() {
 
 export const GET = guard(async (_req, me) => {
   const r = db();
-  const [state, library] = await Promise.all([r.get(keyFor(me)), r.hgetall(LIBRARY)]);
-  return json({ state: state ?? null, library: library ?? {} });
+  const [state, library, removed] = await Promise.all([r.get(keyFor(me)), r.hgetall(LIBRARY), r.hgetall('rise:removed')]);
+  return json({ state: state ?? null, library: library ?? {}, removed: removed ?? {} });
 });
 
 function dayKey(d: Date) {
@@ -60,7 +60,10 @@ export const PUT = guard(async (req, me) => {
   // Removing a piece you added removes it for everyone.
   for (const id of Object.keys(state.deleted || {})) {
     const entry = lib[id];
-    if (entry && (entry.by === me.id || me.owner) && !state.docs?.[id]) await r.hdel(LIBRARY, id);
+    if (entry && (entry.by === me.id || me.owner) && !state.docs?.[id]) {
+      await r.hdel(LIBRARY, id);
+      await r.hset('rise:removed', { [id]: Date.now() });
+    }
   }
   await r.set(`rise:board:${me.id}`, summary(state, me));
   return json({ ok: true });

@@ -7,6 +7,7 @@ import { patchDoc } from './store';
 import { cosine, embed, packReady } from './localml';
 import { downloadAudio, sayChunks, voiceKey } from './speech';
 import { isOnline, keepStorage } from './online';
+import { isIOS } from './localtts';
 
 /* ---------- passage search (works fully offline once the answer pack is downloaded) ---------- */
 export interface Passage {
@@ -66,8 +67,37 @@ export async function hasIndex(id: string, sentences: string[]): Promise<boolean
   }
 }
 
+const WORD = /[a-z0-9']+/g;
+const STOPWORDS = new Set('the a an and or but of to in on for with that this is are was were be it its as at by from you your their they we our not have has had will can into than then so if what how why when who which do does did about'.split(' '));
+
+/** A quick word-overlap search: no model needed, light enough for any phone. */
+function keywordPassages(sentences: string[], query: string, k: number): Passage[] {
+  const terms = [...new Set((query.toLowerCase().match(WORD) || []).filter((w) => !STOPWORDS.has(w) && w.length > 2))];
+  const ps = passages(sentences);
+  if (!terms.length) return ps.slice(0, k);
+  const df = new Map<string, number>();
+  const toks = ps.map((p) => {
+    const ws = p.text.toLowerCase().match(WORD) || [];
+    const set = new Set(ws);
+    for (const tm of terms) if (set.has(tm) || ws.some((w) => w.startsWith(tm))) df.set(tm, (df.get(tm) || 0) + 1);
+    return ws;
+  });
+  const scored = ps.map((p, i) => {
+    let s = 0;
+    for (const tm of terms) {
+      const tf = toks[i].filter((w) => w === tm || w.startsWith(tm)).length;
+      if (tf) s += (1 + Math.log(tf)) * Math.log(1 + ps.length / (df.get(tm) || 1));
+    }
+    return { p, s };
+  });
+  return scored
+    .sort((a, b) => b.s - a.s)
+    .slice(0, k)
+    .map((x) => x.p);
+}
+
 export async function searchPassages(id: string, sentences: string[], query: string, k = 4, onPct?: (p: number) => void): Promise<Passage[]> {
-  if (!packReady()) throw new Error('Download offline answers in Settings to search your material without a connection.');
+  if (!packReady() || isIOS()) return keywordPassages(sentences, query, k);
   let idx: Index | undefined;
   try {
     idx = await idbGet<Index>(idxKey(id));
@@ -149,7 +179,8 @@ export async function prepareOffline(ctx: MapCtx, opts: PrepOptions, onProgress:
   });
   if (cancel.current) return;
   onProgress({ label: 'Indexing for offline search…', pct: aiWeight });
-  if (packReady()) {
+  // Phones skip this: it's slow and memory-hungry there, and Ask falls back to a quick word search.
+  if (packReady() && !isIOS()) {
     await buildIndex(ctx.id, ctx.s.sentences, (p) => onProgress({ label: 'Indexing for offline search…', pct: aiWeight + p * (1 - audioWeight - aiWeight) }));
   }
   let audio: string | undefined;

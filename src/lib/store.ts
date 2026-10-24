@@ -1,4 +1,5 @@
 import { crumb } from './crumbs';
+import { mergeShared } from './bodymerge';
 import { useSyncExternalStore } from 'react';
 import { del as idbDel, get as idbGet, set as idbSet } from 'idb-keyval';
 import type { AppState, DocBody, DocMeta, GameState, Settings, SourceKind } from './types';
@@ -205,7 +206,7 @@ export async function pull() {
   }
   try {
     setSync('syncing');
-    const r = await api<{ state: AppState | null; library?: Record<string, any> }>('/api/state');
+    const r = await api<{ state: AppState | null; library?: Record<string, any>; removed?: Record<string, number> }>('/api/state');
     if (r.state) {
       state = mergeState(state, migrate(r.state));
       emit();
@@ -229,6 +230,15 @@ export async function pull() {
         lessonCount: 0
       };
       added = true;
+    }
+    // A shared piece the other person removed: hide it here too.
+    for (const [id, at] of Object.entries(r.removed || {})) {
+      const d = state.docs[id];
+      if (d && Number(at) > d.createdAt) {
+        delete state.docs[id];
+        state.deleted[id] = Number(at);
+        added = true;
+      }
     }
     if (added) {
       state = { ...state, updatedAt: Date.now() };
@@ -296,8 +306,27 @@ export async function getBody(id: string): Promise<DocBody | null> {
       /* offline */
     }
   }
+  else if (b && canSync()) refreshBody(id, b);
   if (b) b = { ...b, lessons: b.lessons || [], chat: b.chat || [] };
   return b ?? null;
+}
+
+const refreshed = new Map<string, number>();
+/** Picks up idea maps, questions and guides the other person made since this device last looked. */
+function refreshBody(id: string, local: DocBody) {
+  if (Date.now() - (refreshed.get(id) || 0) < 30_000) return;
+  refreshed.set(id, Date.now());
+  api<{ body: DocBody | null }>(`/api/doc?id=${encodeURIComponent(id)}`)
+    .then(async (r) => {
+      if (!r.body) return;
+      const merged = mergeShared(r.body, local) as DocBody;
+      // Your own chat: keep whichever copy has more.
+      if ((r.body.chat?.length || 0) > (local.chat?.length || 0)) merged.chat = r.body.chat;
+      if (JSON.stringify(merged) === JSON.stringify(local)) return;
+      await kvSet(`rise:doc:${id}`, merged);
+      window.dispatchEvent(new CustomEvent('rise-body', { detail: id }));
+    })
+    .catch(() => {});
 }
 
 export async function saveBody(b: DocBody) {

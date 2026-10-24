@@ -124,7 +124,7 @@ export function Reader({ id, title, s, chs, onChapters }: { id: string; title: s
   };
 
   const word = mine && st.wordHighlight ? p.word : null;
-  const font = st.readingFont === 'serif' ? 'var(--serif)' : st.readingFont === 'lexend' ? 'var(--display)' : 'var(--body)';
+  const font = st.readingFont === 'serif' ? 'var(--serif)' : st.readingFont === 'lexend' ? 'var(--read-lexend)' : 'var(--read-atkinson)';
 
   return (
     <div className="reader-wrap">

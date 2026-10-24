@@ -1,4 +1,5 @@
 import { guard, HttpError, json, readBody, store, type Person } from './_lib.js';
+import { mergeShared } from './_merge.js';
 
 const ID = /^[\w-]{6,64}$/;
 /** Parts of a piece that belong to one person: their Ask chat and answers waiting for the coach. */
@@ -37,7 +38,10 @@ export const PUT = guard(async (req, me) => {
     if (k in shared) mine[k] = shared[k];
     delete shared[k];
   }
-  await Promise.all([db().set(`rise:doc:${body.id}`, shared), db().set(mineKey(me, body.id), mine)]);
+  const existing = await db().get<any>(`rise:doc:${body.id}`);
+  const merged = mergeShared(existing, shared);
+  for (const k of PERSONAL) delete merged[k];
+  await Promise.all([db().set(`rise:doc:${body.id}`, merged), db().set(mineKey(me, body.id), mine)]);
   return json({ ok: true });
 });
 

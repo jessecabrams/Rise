@@ -70,3 +70,41 @@ export function fmtBytes(n: number): string {
   if (n < 1e9) return `${Math.round(n / 1e6)} MB`;
   return `${(n / 1e9).toFixed(1)} GB`;
 }
+
+/** Keeps the screen on during a long download. iPhones pause web pages when the screen locks. */
+export async function holdAwake(): Promise<() => void> {
+  let lock: any = null;
+  const take = async () => {
+    try {
+      lock = await (navigator as any).wakeLock?.request?.('screen');
+    } catch {
+      lock = null;
+    }
+  };
+  await take();
+  // The lock is dropped whenever the page is hidden; take it again when you come back.
+  const onVis = () => document.visibilityState === 'visible' && take();
+  document.addEventListener('visibilitychange', onVis);
+  return () => {
+    document.removeEventListener('visibilitychange', onVis);
+    try {
+      lock?.release?.();
+    } catch {
+      /* already released */
+    }
+  };
+}
+
+/** Resolves once the page is on screen again (downloads wait instead of failing while the phone is locked). */
+export function whenVisible(): Promise<void> {
+  if (typeof document === 'undefined' || document.visibilityState === 'visible') return Promise.resolve();
+  return new Promise((res) => {
+    const on = () => {
+      if (document.visibilityState === 'visible') {
+        document.removeEventListener('visibilitychange', on);
+        res();
+      }
+    };
+    document.addEventListener('visibilitychange', on);
+  });
+}

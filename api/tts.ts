@@ -1,44 +1,41 @@
 import { guard, HttpError, json, need, readBody } from './_lib.js';
+import { kokoroClip } from './_voice.js';
 
 interface TtsReq {
   text: string;
+  /** Several sentences at once (Natural voice only), for fast downloads. */
+  texts?: string[];
   provider: 'openai' | 'elevenlabs' | 'kokoro';
   voice: string;
   style?: string;
 }
 
 export const POST = guard(async (req) => {
-  const { text, provider, voice, style } = await readBody<TtsReq>(req, 50_000);
+  const { text, texts, provider, voice, style } = await readBody<TtsReq>(req, 80_000);
+  if (Array.isArray(texts)) {
+    if (provider !== 'kokoro') throw new HttpError(400, 'Batches work with the Natural voice only.');
+    const list = texts.slice(0, 16).map((t) => String(t || '').slice(0, 3500));
+    const clips: ({ audio: string; mime: string; starts: null } | { error: string })[] = new Array(list.length);
+    let next = 0;
+    const lane = async () => {
+      while (next < list.length) {
+        const i = next++;
+        try {
+          clips[i] = list[i].trim() ? await kokoroClip(list[i], voice) : { audio: '', mime: 'audio/mpeg', starts: null };
+        } catch (e: any) {
+          clips[i] = { error: e?.message || 'failed' };
+          // A problem with the key or balance affects every sentence: stop and say so.
+          if (/key|balance/i.test(e?.message || '')) throw e;
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: 6 }, lane));
+    return json({ clips });
+  }
   if (!text || !text.trim()) throw new HttpError(400, 'Nothing to read.');
   if (text.length > 3500) throw new HttpError(400, 'That sentence is too long to voice in one go.');
 
-  if (provider === 'kokoro') {
-    // The Natural voice in the cloud: the same Kokoro voices that run on the device, for about $1 per million characters.
-    const key = need('DEEPINFRA_API_KEY');
-    const base = process.env.DEEPINFRA_BASE_URL || 'https://api.deepinfra.com';
-    const r = await fetch(`${base}/v1/audio/speech`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ model: process.env.DEEPINFRA_TTS_MODEL || 'hexgrad/Kokoro-82M', input: text, voice: voice || 'af_heart', response_format: 'mp3' })
-    });
-    if (!r.ok) {
-      const detail = (await r.text()).slice(0, 200);
-      if (r.status === 401 || r.status === 403) throw new HttpError(502, 'DeepInfra did not accept the key. Check DEEPINFRA_API_KEY in Vercel.');
-      if (r.status === 402) throw new HttpError(502, 'Your DeepInfra balance is used up. Add credit at deepinfra.com.');
-      throw new HttpError(502, `DeepInfra said ${r.status}: ${detail}`);
-    }
-    const type = r.headers.get('content-type') || '';
-    let bytes: Buffer;
-    if (type.includes('json')) {
-      const data: any = await r.json();
-      const raw = String(data.audio || data.data || '').replace(/^data:[^,]+,/, '');
-      if (!raw) throw new HttpError(502, 'DeepInfra sent no audio.');
-      bytes = Buffer.from(raw, 'base64');
-    } else bytes = Buffer.from(await r.arrayBuffer());
-    if (bytes.length < 100) throw new HttpError(502, 'DeepInfra sent no audio.');
-    const isWav = bytes.subarray(0, 4).toString('latin1') === 'RIFF';
-    return json({ audio: bytes.toString('base64'), mime: isWav ? 'audio/wav' : 'audio/mpeg', starts: null });
-  }
+  if (provider === 'kokoro') return json(await kokoroClip(text, voice));
 
   if (provider === 'elevenlabs') {
     const key = need('ELEVENLABS_API_KEY');

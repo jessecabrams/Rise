@@ -2,7 +2,9 @@ import { randomInt } from 'node:crypto';
 import { codeHash, guard, HttpError, json, readBody, store } from './_lib.js';
 
 const WORDS = 'amber anchor aspen beacon bloom brook canyon cedar comet coral crest dawn ember fern glow harbor horizon juniper lark maple meadow moss nova ocean orchid pebble pine prairie quartz river saffron sage sparrow spruce summit sun tide willow'.split(' ');
-const newCode = () => `${WORDS[randomInt(WORDS.length)]}-${WORDS[randomInt(WORDS.length)]}-${randomInt(1000, 9999)}`;
+const w = () => WORDS[randomInt(WORDS.length)];
+/** Three words and four digits: easy to type, hard to guess (over 500 million combinations). */
+const newCode = () => `${w()}-${w()}-${w()}-${randomInt(1000, 9999)}`;
 
 function db() {
   const r = store();

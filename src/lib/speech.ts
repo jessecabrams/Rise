@@ -3,8 +3,8 @@ import { useSyncExternalStore } from 'react';
 import { getState } from './store';
 import { api, server } from './api';
 import { wordAt } from './text';
-import { createStore, get as idbGet, set as idbSet, del as idbDel } from 'idb-keyval';
-import { isOnline } from './online';
+import { createStore, get as idbGet, set as idbSet, del as idbDel, keys as idbKeys, setMany as idbSetMany } from 'idb-keyval';
+import { holdAwake, isOnline, whenVisible } from './online';
 import { clearPrefetch, localNatural, neuralReady, neuralSpeak } from './localtts';
 
 let audioStore: ReturnType<typeof createStore> | null = null;
@@ -118,6 +118,7 @@ async function cloudClip(text: string, v: Voice): Promise<StoredClip> {
     method: 'POST',
     body: { text, provider: v.provider === 'neural' ? 'kokoro' : v.provider, voice: v.voice, style: v.style }
   });
+  if (!r.audio) return silentClip();
   const bin = atob(r.audio);
   const bytes = new Uint8Array(bin.length);
   for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
@@ -668,39 +669,137 @@ function sayDevice(text: string): Promise<void> {
   });
 }
 
-/** Saves studio-voice audio for every sentence so the piece plays offline. */
-export async function downloadAudio(sentences: string[], onPct: (p: number) => void, cancel: { current: boolean }) {
-  if (!voiceKey()) return;
-  let next = 0;
-  let done = 0;
-  const work = async () => {
-    while (next < sentences.length && !cancel.current) {
-      const i = next++;
-      const text = sentences[i];
-      const key = `${voiceKey()}|${text}`;
-      let have = false;
-      try {
-        have = !!(await idbGet(key, clipStore()));
-      } catch {
-        have = false;
-      }
-      if (!have) {
-        for (let attempt = 0; attempt < 3; attempt++) {
-          try {
-            clips.delete(key);
-            await fetchClip(text, true, cloudVoice()!, BULK + 1);
-            break;
-          } catch (e: any) {
-            if (attempt === 2) throw e;
-            await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+/** Which sentences already have saved audio for a voice. One quick look at the list of keys, no audio is read. */
+export async function savedSet(key: string): Promise<Set<string>> {
+  const out = new Set<string>();
+  try {
+    const prefix = `${key}|`;
+    for (const k of await idbKeys(clipStore())) if (typeof k === 'string' && k.startsWith(prefix)) out.add(k.slice(prefix.length));
+  } catch {
+    /* storage blocked */
+  }
+  return out;
+}
+
+export interface DownloadResult {
+  saved: number;
+  failed: number;
+}
+
+function b64(s: string): ArrayBuffer {
+  const bin = atob(s);
+  const bytes = new Uint8Array(bin.length);
+  for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
+  return bytes.buffer;
+}
+
+/**
+ * Saves voice audio for these sentences so they play offline. Already-saved sentences are skipped, so a stopped
+ * download picks up where it left off. The Natural voice is fetched from the cloud ten sentences per request,
+ * several requests at once. While the phone is locked the download waits instead of failing.
+ */
+export async function downloadAudio(sentences: string[], onPct: (p: number) => void, cancel: { current: boolean }): Promise<DownloadResult> {
+  const key = voiceKey();
+  const v = cloudVoice();
+  if (!key || !v) return { saved: 0, failed: 0 };
+  const unique = [...new Set(sentences)].filter(speakable);
+  const have = await savedSet(key);
+  const todo = unique.filter((t) => !have.has(t));
+  const total = unique.length;
+  let done = total - todo.length;
+  let failed = 0;
+  onPct(total ? done / total : 1);
+  if (!todo.length) return { saved: 0, failed: 0 };
+  const release = await holdAwake();
+  const batched = v.provider === 'neural' && server.has('kokoro') && getState().settings.naturalWhere !== 'device';
+  try {
+    if (batched) {
+      let groups: string[][] = [];
+      for (let i = 0; i < todo.length; i += 10) groups.push(todo.slice(i, i + 10));
+      let next = 0;
+      let fatal: Error | null = null;
+      let missed: string[] = [];
+      const lane = async () => {
+        while (next < groups.length && !cancel.current && !fatal) {
+          const g = groups[next++];
+          for (let attempt = 0; ; attempt++) {
+            await whenVisible();
+            if (cancel.current || fatal) return;
+            try {
+              if (!isOnline()) throw new Error('offline');
+              const r = await api<{ clips: ({ audio: string; mime: string } | { error: string })[] }>('/api/tts', {
+                method: 'POST',
+                body: { texts: g, provider: 'kokoro', voice: v.voice }
+              });
+              const entries: [string, StoredClip][] = [];
+              r.clips.forEach((c, k) => {
+                if (!c || 'error' in c) return missed.push(g[k]);
+                entries.push([`${key}|${g[k]}`, c.audio ? { mime: c.mime, bytes: b64(c.audio), starts: null } : silentClip()]);
+              });
+              try {
+                await idbSetMany(entries, clipStore());
+              } catch {
+                throw Object.assign(new Error('This device is out of space for audio. Remove downloads you no longer need, then try again.'), { fatal: true });
+              }
+              done += entries.length;
+              onPct(done / total);
+              break;
+            } catch (e: any) {
+              if (e?.fatal || /key|balance/i.test(e?.message || '')) {
+                fatal = e;
+                return;
+              }
+              if (attempt >= 5) {
+                failed += g.length;
+                break;
+              }
+              await sleep(Math.min(8000, 600 * 2 ** attempt));
+            }
           }
         }
+      };
+      await Promise.all([lane(), lane(), lane()]);
+      // A second pass for any sentences that hit a hiccup.
+      if (missed.length && !cancel.current && !fatal) {
+        groups = [];
+        for (let i = 0; i < missed.length; i += 5) groups.push(missed.slice(i, i + 5));
+        missed = [];
+        next = 0;
+        await Promise.all([lane(), lane()]);
       }
-      onPct(++done / sentences.length);
+      failed += missed.length;
+      if (fatal) throw fatal;
+    } else {
+      let next = 0;
+      const lane = async () => {
+        while (next < todo.length && !cancel.current) {
+          const text = todo[next++];
+          for (let attempt = 0; ; attempt++) {
+            await whenVisible();
+            if (cancel.current) return;
+            try {
+              clips.delete(`${v.provider}|${v.voice}|${v.style}|${text}`);
+              await fetchClip(text, true, v, BULK + 1);
+              done++;
+              onPct(done / total);
+              break;
+            } catch (e: any) {
+              if (/key|balance/i.test(e?.message || '')) throw e;
+              if (attempt >= 3) {
+                failed++;
+                break;
+              }
+              await sleep(800 * (attempt + 1));
+            }
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: v.provider === 'neural' ? 4 : 6 }, () => lane()));
     }
-  };
-  // Cloud voices can make many sentences at once; this computer's engine works through its own queue anyway.
-  await Promise.all(Array.from({ length: 8 }, () => work()));
+  } finally {
+    release();
+  }
+  return { saved: done, failed };
 }
 
 /** Deletes downloaded studio-voice audio for these sentences. */

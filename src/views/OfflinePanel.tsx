@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { ErrorNote, Horizon, Icon, Toggle } from '../components/ui';
-import { hasIndex, prepareOffline, removeIndex, type PrepProgress } from '../lib/offline';
-import { audioEstimateMB, canDownloadAudio, removeAudio, sayChunks, voiceKey } from '../lib/speech';
+import { prepareOffline, type PrepProgress } from '../lib/offline';
+import { chapterAt } from '../lib/text';
+import { canDownloadAudio, downloadAudio, removeAudio, savedSet, usePlayer, voiceKey } from '../lib/speech';
 import { importAudioPack, makeAudioPacks, packEstimateMB, saveFile, type PackFile, type PackProgress } from '../lib/audiopack';
 import { localNatural, NATURAL_VOICES } from '../lib/localtts';
 import { ANSWER_PACK_MB, downloadAnswerPack, packReady, removeAnswerPack, usePack } from '../lib/localml';
@@ -14,108 +15,255 @@ import { patchDoc, useApp } from '../lib/store';
 import { go } from '../lib/nav';
 import type { DocCtx } from './Doc';
 
-/** Download one piece for offline use. */
+/** Download one piece for offline use: audio to listen, and quizzes. */
 export function DocOffline({ ctx }: { ctx: DocCtx }) {
+  return (
+    <div className="stack">
+      <AudioDownload ctx={ctx} />
+      <QuizDownload ctx={ctx} />
+      <AudioForPhone ctx={ctx} />
+    </div>
+  );
+}
+
+type Scope = 'chapter' | 'rest' | 'all';
+const standalone = () => (typeof matchMedia !== 'undefined' && matchMedia('(display-mode: standalone)').matches) || !!(navigator as any).standalone;
+
+function AudioDownload({ ctx }: { ctx: DocCtx }) {
   const meta = useApp((s) => s.docs[ctx.id]);
+  const provider = useApp((s) => s.settings.provider);
   const online = useOnline();
-  const pack = usePack();
-  const natural = useNatural();
+  const p = usePlayer();
+  const vk = voiceKey();
+  const canDl = canDownloadAudio();
+  const [scope, setScope] = useState<Scope>('chapter');
+  const [saved, setSaved] = useState<Set<string> | null>(null);
+  const [pct, setPct] = useState<number | null>(null);
+  const [eta, setEta] = useState('');
+  const [error, setError] = useState('');
+  const [note, setNote] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [stopping, setStopping] = useState(false);
+  const cancel = useRef(false);
+
+  const at = p.docId === ctx.id ? p.index : meta?.position || 0;
+  const cur = chapterAt(ctx.chs, at) || ctx.chs[0];
+  const range = (sc: Scope) =>
+    sc === 'all' || !cur ? { start: 0, end: ctx.s.sentences.length } : sc === 'chapter' ? { start: cur.start, end: cur.end } : { start: cur.start, end: ctx.s.sentences.length };
+  const textsFor = (sc: Scope) => {
+    const r = range(sc);
+    return [...new Set(ctx.s.sentences.slice(r.start, r.end))];
+  };
+
+  const refresh = () => (vk ? savedSet(vk).then(setSaved) : Promise.resolve());
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vk, ctx.id]);
+
+  if (!vk) return <Card title="Listen offline" hint="Your device voice works offline. There's nothing to download." />;
+  if (!canDl)
+    return (
+      <Card
+        title="Listen offline"
+        hint={provider === 'neural' ? 'To get the Natural voice on this phone, add an audio file made on your computer (below).' : 'This voice can’t be downloaded right now.'}
+      />
+    );
+
+  const texts = textsFor(scope);
+  const have = saved ? texts.filter((x) => saved.has(x)).length : 0;
+  const left = texts.length - have;
+  const leftWords = texts.filter((x) => !saved?.has(x)).reduce((a, x) => a + (x.match(/\S+/g) || []).length, 0);
+  const mbPerMin = provider === 'neural' ? 0.24 : 1;
+  const leftMb = Math.max(1, Math.round((leftWords / 150) * mbPerMin));
+  const allTexts = textsFor('all');
+  const allHave = saved ? allTexts.filter((x) => saved.has(x)).length : 0;
+  const finishedTexts = cur ? [...new Set(ctx.s.sentences.slice(0, cur.start))].filter((x) => saved?.has(x)) : [];
+
+  async function run() {
+    cancel.current = false;
+    setError('');
+    setNote('');
+    setPct(0);
+    setStopping(false);
+    const started = Date.now();
+    let lastRefresh = started;
+    try {
+      await keepStorage();
+      const r = await downloadAudio(
+        texts,
+        (f) => {
+          setPct(f);
+          if (Date.now() - lastRefresh > 3000) {
+            lastRefresh = Date.now();
+            refresh();
+          }
+          const spent = (Date.now() - started) / 1000;
+          if (f > 0.03 && f < 1) {
+            const sec = (spent / f) * (1 - f);
+            setEta(sec > 90 ? `about ${Math.round(sec / 60)} min left` : 'less than 2 min left');
+          }
+        },
+        cancel
+      );
+      await refresh();
+      if (cancel.current) setNote('Stopped. Tap Download to pick up where you left off.');
+      else if (r.failed) setNote(`${r.failed} sentences didn’t download. Tap Download again to finish them.`);
+      else setNote('Done. This part plays without a connection.');
+      const all = await savedSet(vk!);
+      if (allTexts.every((x) => all.has(x) || !/[A-Za-z]{2,}|[0-9]{2,}/.test(x))) patchDoc(ctx.id, (d) => (d.offline = { ...(d.offline || { at: Date.now(), chapters: 0 }), audio: vk!, audioAt: Date.now() }));
+    } catch (e: any) {
+      setError(e.message || 'The download stopped. Try again.');
+    } finally {
+      setPct(null);
+      setEta('');
+    }
+  }
+
+  async function remove(list: string[], label: string) {
+    if (confirm !== label) return setConfirm(label);
+    setConfirm('');
+    await removeAudio(list, vk!);
+    if (label === 'all') patchDoc(ctx.id, (d) => d.offline && delete d.offline.audio);
+    await refresh();
+  }
+
+  return (
+    <div className="group">
+      <div className="group-head">
+        <h3>Listen offline</h3>
+        <span className="hint tabular">
+          {allHave.toLocaleString()} of {allTexts.length.toLocaleString()} sentences saved
+        </span>
+      </div>
+      <div className="seg" role="radiogroup" aria-label="What to download">
+        {(
+          [
+            ['chapter', ctx.chs.length > 1 ? 'This chapter' : 'All of it'],
+            ['rest', 'To the end'],
+            ['all', 'Whole book']
+          ] as [Scope, string][]
+        )
+          .filter(([k]) => ctx.chs.length > 1 || k === 'chapter')
+          .map(([k, label]) => (
+            <button key={k} role="radio" aria-checked={scope === k} className={scope === k ? 'on' : ''} onClick={() => setScope(k)} disabled={pct !== null}>
+              {label}
+            </button>
+          ))}
+      </div>
+      <p className="hint tabular">
+        {left === 0 ? 'All saved on this device.' : `${left.toLocaleString()} sentences to get · about ${leftMb} MB`}
+        {ctx.chs.length > 1 && scope !== 'all' && cur ? ` · starting at ${cur.label}` : ''}
+      </p>
+      {pct !== null ? (
+        <div className="stack" role="status">
+          <Horizon pct={pct} label="Download progress" />
+          <div className="row between">
+            <span className="hint tabular">
+              {Math.round(pct * 100)}%{eta ? ` · ${eta}` : ''}
+            </span>
+            <button
+              className="btn btn-ghost sm"
+              disabled={stopping}
+              onClick={() => {
+                cancel.current = true;
+                setStopping(true);
+              }}
+            >
+              {stopping ? 'Stopping…' : 'Stop'}
+            </button>
+          </div>
+          <p className="hint">Keep Rise open. The screen stays on while it downloads.</p>
+        </div>
+      ) : (
+        left > 0 && (
+          <button className="btn btn-sun" onClick={run} disabled={!online}>
+            <Icon name="download" size={18} /> Download
+          </button>
+        )
+      )}
+      {!online && pct === null && left > 0 && <p className="hint warn">You're offline. Downloading needs a connection.</p>}
+      {note && <p className="hint">{note}</p>}
+      {error && <ErrorNote message={error} />}
+      {isIOS() && !standalone() && allHave > 0 && (
+        <p className="hint warn">Add Rise to your Home Screen (Share › Add to Home Screen). In a Safari tab, iPhone can clear downloads after a week of not opening Rise.</p>
+      )}
+      {pct === null && (allHave > 0 || finishedTexts.length > 0) && (
+        <div className="row gap wrap">
+          {finishedTexts.length > 20 && (
+            <button className="link-btn" onClick={() => remove(finishedTexts, 'done')}>
+              {confirm === 'done' ? 'Tap again to remove' : 'Free up space: remove chapters you’ve finished'}
+            </button>
+          )}
+          {allHave > 0 && (
+            <button className="link-btn" onClick={() => remove(allTexts, 'all')}>
+              {confirm === 'all' ? 'Tap again to remove all audio' : 'Remove this book’s audio'}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Card({ title, hint }: { title: string; hint: string }) {
+  return (
+    <div className="group">
+      <div className="group-head">
+        <h3>{title}</h3>
+      </div>
+      <p className="hint">{hint}</p>
+    </div>
+  );
+}
+
+function QuizDownload({ ctx }: { ctx: DocCtx }) {
+  const online = useOnline();
   const chs = ctx.chs;
   const mapped = chs.filter((c) => ctx.body.map?.[c.index]).length;
   const banked = chs.filter((c) => ctx.body.bank?.[c.index]?.length).length;
   const questions = Object.values(ctx.body.bank || {}).reduce((a, l) => a + l.length, 0);
-  const vk = voiceKey();
-  const canDl = canDownloadAudio();
-  const [audio, setAudio] = useState(!!vk && canDl && !!meta?.offline?.audio);
   const [prog, setProg] = useState<PrepProgress | null>(null);
   const [error, setError] = useState('');
-  const [indexed, setIndexed] = useState(false);
   const cancel = useRef(false);
-  const ready = banked === chs.length;
-  const audioReady = !!vk && meta?.offline?.audio === vk;
-
-  useEffect(() => {
-    hasIndex(ctx.id, ctx.s.sentences).then(setIndexed);
-  }, [ctx.id, ctx.s, prog]);
+  const ready = banked === chs.length && mapped === chs.length;
 
   async function run() {
     cancel.current = false;
     setError('');
     setProg({ label: 'Starting…', pct: 0 });
     try {
-      await prepareOffline(ctx, { audio: audio && !!vk && canDl }, setProg, cancel);
+      await prepareOffline(ctx, { audio: false }, setProg, cancel);
     } catch (e: any) {
-      setError(e.message || 'The download stopped. Try again.');
+      setError(e.message || 'That stopped. Try again.');
     } finally {
       setProg(null);
     }
   }
 
-  const row = (ok: boolean, label: string, detail: string) => (
-    <li className={ok ? 'on' : ''}>
-      <span className="status-dot" aria-hidden="true" />
-      <span className="grow">{label}</span>
-      <span className="hint">{detail}</span>
-    </li>
-  );
-
   return (
-    <div className="stack">
-      <p className="hint">Prepare this piece once while you have signal. Then listen, quiz, answer out loud and ask questions with no connection.</p>
-      <ul className="status-list">
-        {row(mapped === chs.length, 'Idea map', `${mapped}/${chs.length} ${chs.length === 1 ? 'piece' : 'chapters'}`)}
-        {row(ready, 'Offline questions', questions ? `${questions} questions` : 'not yet')}
-        {row(indexed, 'Offline search for Ask', indexed ? 'ready' : pack.status === 'ready' ? 'not yet' : 'needs offline answers')}
-        {row(audioReady || !vk, 'Reading and quiz questions in your voice', !vk ? 'your chosen voice works offline' : audioReady ? 'downloaded' : 'not downloaded')}
-        {row(natural.status === 'ready', 'Feedback and answers read aloud', natural.status === 'ready' ? 'Natural voice' : 'device voice')}
-        {row(pack.status === 'ready', 'Offline grading and voice answers', pack.status === 'ready' ? 'on this device' : 'set up once in Settings')}
-      </ul>
-      {vk && canDl && (
-        <Toggle
-          id="dl-audio"
-          checked={audio}
-          onChange={setAudio}
-          label="Include voice audio"
-          hint={`About ${audioEstimateMB(meta?.wordCount || 0) + 2} MB for the reading and the quiz questions. Without it, ${natural.status === 'ready' ? 'the Natural voice' : 'your device voice'} reads offline.`}
-        />
-      )}
+    <div className="group">
+      <div className="group-head">
+        <h3>Quiz offline</h3>
+        <span className="hint tabular">{ready ? `${questions} questions ready` : `${banked} of ${chs.length} ${chs.length === 1 ? 'piece' : 'chapters'} ready`}</span>
+      </div>
+      <p className="hint">Idea maps and practice questions for every chapter, so you can quiz yourself with no connection.</p>
       {prog ? (
         <div className="stack" role="status">
           <span className="hint">{prog.label}</span>
-          <Horizon pct={prog.pct} label="Download progress" />
+          <Horizon pct={prog.pct} label="Progress" />
           <button className="btn btn-ghost sm" onClick={() => (cancel.current = true)}>
             Stop
           </button>
         </div>
       ) : (
-        <div className="row gap wrap">
-          <button className="btn btn-sun" onClick={run} disabled={!online}>
-            <Icon name="download" size={18} /> {ready && (!audio || audioReady) && (indexed || !packReady()) ? 'Update download' : 'Download for offline'}
+        !ready && (
+          <button className="btn btn-ghost" onClick={run} disabled={!online}>
+            <Icon name="target" size={18} /> Get quizzes ready
           </button>
-          {pack.status !== 'ready' && (
-            <button className="btn btn-ghost" onClick={() => go({ name: 'settings' })}>
-              Set up offline answers
-            </button>
-          )}
-        </div>
+        )
       )}
-      {!online && <p className="hint warn">You're offline. Downloading needs a connection.</p>}
       {error && <ErrorNote message={error} />}
-      <AudioForPhone ctx={ctx} />
-      {audioReady && !prog && (
-        <button
-          className="link-btn"
-          onClick={async () => {
-            const qs = Object.values(ctx.body.bank || {}).flat().flatMap((q) => sayChunks(q.question));
-            await removeAudio([...ctx.s.sentences, ...qs], meta!.offline!.audio!);
-            await removeIndex(ctx.id);
-            patchDoc(ctx.id, (d) => d.offline && delete d.offline.audio);
-            setAudio(false);
-          }}
-        >
-          Remove downloaded audio
-        </button>
-      )}
     </div>
   );
 }
