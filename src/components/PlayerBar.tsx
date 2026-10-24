@@ -19,6 +19,9 @@ export function PlayerBar() {
     return () => clearTimeout(t);
   }, [p.error]);
   if (!p.docId) return null;
+  // While you're answering questions or reading a guide, the paused player steps aside. It comes back when reading.
+  const busyTab = view.name === 'doc' && view.id === p.docId && view.tab !== 'listen';
+  if (busyTab && !p.playing && !p.loading) return null;
   const pct = p.total ? (p.index + 1) / p.total : 0;
   const onDoc = view.name === 'doc' && view.id === p.docId;
 

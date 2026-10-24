@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { boot, getState, patchDoc, pull, saveNow, useApp } from './lib/store';
 import { go, useView } from './lib/nav';
 import { player } from './lib/speech';
@@ -25,6 +25,18 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const online = useOnline();
   const provider = useApp((s) => s.settings.provider);
+  // The page always leaves room for the player and tab bar at the bottom, however tall they are,
+  // so nothing (like quiz answers) ends up hidden underneath.
+  const dockRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = dockRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const set = () => document.documentElement.style.setProperty('--dock-h', `${Math.ceil(el.getBoundingClientRect().height)}px`);
+    const ro = new ResizeObserver(set);
+    ro.observe(el);
+    set();
+    return () => ro.disconnect();
+  });
 
   // Start the Natural voice in the background, so pressing play doesn't wait for it.
   useEffect(() => {
@@ -206,7 +218,7 @@ export default function App() {
         )}
       </main>
 
-      <div className="dock">
+      <div className="dock" ref={dockRef}>
         <PlayerBar />
         <nav className="tabbar" aria-label="Main">
           {nav.map((n) => (

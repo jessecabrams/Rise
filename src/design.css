@@ -758,3 +758,13 @@ mark.w {
 .player-error {
   background: color-mix(in srgb, var(--surface) 94%, transparent);
 }
+
+/* Room at the bottom for the player and tab bar, measured live. */
+.main {
+  padding-bottom: calc(var(--dock-h, 140px) + 28px);
+}
+@media (min-width: 900px) {
+  .main {
+    padding-bottom: calc(var(--dock-h, 100px) + 40px);
+  }
+}
