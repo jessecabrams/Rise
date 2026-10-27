@@ -50,10 +50,10 @@ export function PlayerBar() {
           </button>
         </div>
         <div className="player-extras">
-          <button className="pill" onClick={() => setSheet('speed')} aria-label="Reading speed">
+          <button className="pill speed-pill" onClick={() => setSheet('speed')} aria-label="Reading speed">
             <span className="tabular">{rate.toFixed(2).replace(/\.?0+$/, '')}×</span>
           </button>
-          <button className="pill" onClick={() => setSheet('voice')} aria-label="Choose voice">
+          <button className="pill voice-pill" onClick={() => setSheet('voice')} aria-label="Choose voice">
             <Icon name="wave" size={18} />
             <span className="hide-sm">Voice</span>
           </button>

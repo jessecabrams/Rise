@@ -276,6 +276,17 @@ export type { StoredClip, Voice };
 
 /* ---------- player ---------- */
 // A tiny silent sound, used to unlock audio on iPhone during the tap on play.
+/** Tell iPhone this is a listening app: play through the speaker even with the ringer on silent, like Music or Podcasts. */
+function mediaSession() {
+  try {
+    const s = (navigator as any).audioSession;
+    if (s && s.type !== 'playback') s.type = 'playback';
+  } catch {
+    /* older browsers */
+  }
+}
+if (typeof navigator !== 'undefined') mediaSession();
+const speaking = () => typeof speechSynthesis !== 'undefined' && (speechSynthesis.speaking || speechSynthesis.pending);
 const SILENCE = 'data:audio/mpeg;base64,//NAxAAAAANIAAAAAExBTUUDAAkIAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/80LEAAAAA0gAAAAATEFNRQMACQgABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/80DEAAAAA0gAAAAATEFNRQMACQgABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/zQsQAAAADSAAAAABMQU1FAwAJCAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/zQMQAAAADSAAAAABMQU1FAwAJCAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//NCxAAAAANIAAAAAExBTUUDAAkIAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 let unlockedSpeech = false;
 
@@ -346,6 +357,7 @@ class Player {
    * "unlocks" the audio player and the speech engine right away.
    */
   private unlock() {
+    mediaSession();
     try {
       if (!this.audio) this.audio = new Audio();
       const a = this.audio;
@@ -357,7 +369,9 @@ class Player {
       /* not supported */
     }
     try {
-      if (typeof speechSynthesis !== 'undefined' && !unlockedSpeech) {
+      // Only wake the phone's speech engine when it will actually be used. Touching it switches iPhone
+      // audio into a mode that follows the silent switch and can pause other sound.
+      if (typeof speechSynthesis !== 'undefined' && !unlockedSpeech && !cloudVoice()) {
         const u = new SpeechSynthesisUtterance(' ');
         u.volume = 0;
         speechSynthesis.speak(u);
@@ -416,7 +430,7 @@ class Player {
   private stopAll() {
     this.token++;
     cancelAnimationFrame(this.raf);
-    if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
+    if (speaking()) speechSynthesis.cancel();
     if (this.audio) {
       this.audio.onended = null;
       this.audio.pause();
@@ -515,6 +529,8 @@ class Player {
     if (!this.audio) this.audio = new Audio();
     const a = this.audio;
     a.src = clip.url;
+    a.muted = false;
+    a.volume = 1;
     a.playbackRate = getState().settings.rate;
     (a as any).preservesPitch = true;
     a.onended = () => {
@@ -613,7 +629,7 @@ let sayToken = 0;
 export function stopSay() {
   sayToken++;
   if (sayAudio) sayAudio.pause();
-  if (typeof speechSynthesis !== 'undefined' && !player.s.playing) speechSynthesis.cancel();
+  if (speaking() && !player.s.playing) speechSynthesis.cancel();
 }
 
 /** Speaks text with the current voice. Resolves when finished or stopped. */

@@ -713,8 +713,22 @@ mark.w {
     padding: 8px 8px 8px 16px;
     border-radius: 20px;
   }
+  .player {
+    grid-template-columns: 1fr auto auto;
+    grid-template-areas: 'title controls extras';
+  }
   .player-extras {
+    gap: 4px;
+  }
+  .player-extras .speed-pill,
+  .player-extras .icon-btn {
     display: none;
+  }
+  .player-extras .voice-pill {
+    min-height: 36px;
+    width: 36px;
+    padding: 0;
+    justify-content: center;
   }
   .player-controls {
     gap: 2px;
