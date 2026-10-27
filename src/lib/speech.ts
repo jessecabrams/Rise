@@ -3,7 +3,7 @@ import { useSyncExternalStore } from 'react';
 import { getState } from './store';
 import { api, server } from './api';
 import { wordAt } from './text';
-import { createStore, get as idbGet, set as idbSet, del as idbDel, keys as idbKeys, setMany as idbSetMany } from 'idb-keyval';
+import { createStore, get as idbGet, set as idbSet, del as idbDel, delMany as idbDelMany, keys as idbKeys, setMany as idbSetMany } from 'idb-keyval';
 import { holdAwake, isOnline, whenVisible } from './online';
 import { clearPrefetch, localNatural, neuralReady, neuralSpeak } from './localtts';
 
@@ -838,4 +838,15 @@ export async function removeAudio(sentences: string[], key: string) {
 /** Rough size of studio-voice audio: about 1 MB per minute of listening. */
 export function audioEstimateMB(words: number): number {
   return Math.max(1, Math.round(words / 165));
+}
+
+/** Clears out Natural voice audio saved before the Oct 27 fix (it was silent), so it stops taking up space. */
+export async function cleanOldAudio(): Promise<number> {
+  try {
+    const old = (await idbKeys(clipStore())).filter((k) => typeof k === 'string' && k.startsWith('neural|'));
+    for (let i = 0; i < old.length; i += 500) await idbDelMany(old.slice(i, i + 500), clipStore());
+    return old.length;
+  } catch {
+    return 0;
+  }
 }

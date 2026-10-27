@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { boot, getState, patchDoc, pull, saveNow, useApp } from './lib/store';
 import { go, useView } from './lib/nav';
-import { player } from './lib/speech';
+import { cleanOldAudio, player } from './lib/speech';
+import { crumb } from './lib/crumbs';
 import { prewarmNatural } from './lib/localtts';
 import { safeMode } from './lib/crumbs';
 import { award, dayKey, levelInfo } from './lib/game';
@@ -37,6 +38,18 @@ export default function App() {
     set();
     return () => ro.disconnect();
   });
+
+  // Once, a little after launch: remove the silent audio saved before the Oct 27 fix, and the
+  // "downloaded" marks that pointed to it.
+  useEffect(() => {
+    if (!ready) return;
+    const t = setTimeout(async () => {
+      for (const d of Object.values(getState().docs)) if (d.offline?.audio?.startsWith('neural|')) patchDoc(d.id, (m) => m.offline && delete m.offline.audio);
+      const n = await cleanOldAudio();
+      if (n) crumb(`cleared ${n} old silent clips`);
+    }, 4000);
+    return () => clearTimeout(t);
+  }, [ready]);
 
   // Start the Natural voice in the background, so pressing play doesn't wait for it.
   useEffect(() => {
