@@ -52,10 +52,14 @@ export function readWav(buf: Buffer): Pcm | null {
   return null;
 }
 
-/** Speech doesn't need more than 24 kHz; lower rates make smaller files. */
+/**
+ * Speech sounds the same at 22.05 kHz. (The MP3 encoder mishandles 24 kHz at low bitrates and
+ * produced near-silent audio, so everything is converted to 22.05 kHz first.)
+ */
+const RATE = 22050;
 function to24k(p: Pcm): Pcm {
-  if (p.rate <= 24000) return p;
-  const ratio = p.rate / 24000;
+  if (p.rate === RATE) return p;
+  const ratio = p.rate / RATE;
   const n = Math.floor(p.samples.length / ratio);
   const out = new Int16Array(n);
   for (let i = 0; i < n; i++) {
@@ -64,7 +68,7 @@ function to24k(p: Pcm): Pcm {
     const b = Math.min(a + 1, p.samples.length - 1);
     out[i] = Math.round(p.samples[a] + (p.samples[b] - p.samples[a]) * (x - a));
   }
-  return { rate: 24000, samples: out };
+  return { rate: RATE, samples: out };
 }
 
 export function toMp3(input: Pcm): Buffer {

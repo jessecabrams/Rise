@@ -1,4 +1,4 @@
-import { BULK, clipBytes, downloadAudio, naturalVoice, saveClip, sayChunks } from './speech';
+import { BULK, vk, clipBytes, downloadAudio, naturalVoice, saveClip, sayChunks } from './speech';
 import { getState, patchDoc, setSettings } from './store';
 import type { Chapter, Structured } from './text';
 import type { DocBody } from './types';
@@ -47,7 +47,7 @@ export async function makeAudioPacks(
   cancel: { current: boolean }
 ): Promise<PackFile[]> {
   const v = naturalVoice();
-  const key = `${v.provider}|${v.voice}|${v.style}`;
+  const key = vk(v);
   const all = chs.length === 0;
   const texts: string[] = [];
   const seen = new Set<string>();

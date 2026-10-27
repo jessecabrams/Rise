@@ -86,10 +86,16 @@ function voiceChain(): Voice[] {
   return [main, backup].filter(Boolean) as Voice[];
 }
 
+/**
+ * The prefix for a voice's saved audio. Natural voice audio saved before Oct 27, 2026 was silent
+ * (an encoder bug), so it lives under an old prefix and is never used again.
+ */
+export const vk = (v: { provider: string; voice: string; style: string }) => `${v.provider === 'neural' ? 'neural2' : v.provider}|${v.voice}|${v.style}`;
+
 /** Identifies the current voice's saved audio, or null for device voices. */
 export function voiceKey(): string | null {
   const v = cloudVoice();
-  return v ? `${v.provider}|${v.voice}|${v.style}` : null;
+  return v ? `${vk(v)}` : null;
 }
 
 /** Can audio for the current voice be downloaded right now? */
@@ -167,7 +173,7 @@ function silentClip(): StoredClip {
 }
 
 function fetchClip(text: string, persist = false, v: Voice = cloudVoice()!, pri = 0): Promise<Clip> {
-  const key = `${v.provider}|${v.voice}|${v.style}|${text}`;
+  const key = `${vk(v)}|${text}`;
   const hit = clips.get(key);
   if (hit) return hit;
   const p = (async (): Promise<Clip> => {
@@ -223,7 +229,7 @@ async function urgentClip(text: string, v: Voice): Promise<Clip> {
 
 /** Races the cloud against this computer for one sentence; the faster one wins and is kept. */
 function withCloud(text: string, v: Voice): Promise<Clip> {
-  const key = `${v.provider}|${v.voice}|${v.style}|${text}`;
+  const key = `${vk(v)}|${text}`;
   const local = clips.get(key) || fetchClip(text, false, v, 1);
   if (ready.has(key)) return local;
   const fromCloud = cloudClip(text, v).then(async (made) => {
@@ -245,7 +251,7 @@ function withCloud(text: string, v: Voice): Promise<Clip> {
 
 /** Saved audio for one sentence, for building audio packs. */
 export async function clipBytes(text: string, v: Voice = cloudVoice()!, pri = 1): Promise<StoredClip> {
-  const key = `${v.provider}|${v.voice}|${v.style}|${text}`;
+  const key = `${vk(v)}|${text}`;
   try {
     const s = await idbGet<StoredClip>(key, clipStore());
     if (s) return s;
@@ -496,7 +502,7 @@ class Player {
           await sleep(700);
           if (tok !== this.token) return;
           try {
-            clips.delete(`${v.provider}|${v.voice}|${v.style}|${this.sentences[i]}`);
+            clips.delete(`${vk(v)}|${this.sentences[i]}`);
             clip = await urgentClip(this.sentences[i], v);
             used = v;
             break;
@@ -540,7 +546,7 @@ class Player {
     a.onerror = () => {
       if (tok !== this.token) return;
       crumb(`audio error on ${i}: ${a.error?.code || '?'}`);
-      clips.delete(`${used!.provider}|${used!.voice}|${used!.style}|${this.sentences[i]}`);
+      clips.delete(`${vk(used!)}|${this.sentences[i]}`);
       this.done(i, tok);
     };
     // The phone paused the sound itself (a call, another app, a notification): show it as paused.
@@ -794,7 +800,7 @@ export async function downloadAudio(sentences: string[], onPct: (p: number) => v
             await whenVisible();
             if (cancel.current) return;
             try {
-              clips.delete(`${v.provider}|${v.voice}|${v.style}|${text}`);
+              clips.delete(`${vk(v)}|${text}`);
               await fetchClip(text, true, v, BULK + 1);
               done++;
               onPct(done / total);
