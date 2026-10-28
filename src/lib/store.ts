@@ -316,13 +316,15 @@ const refreshed = new Map<string, number>();
 function refreshBody(id: string, local: DocBody) {
   if (Date.now() - (refreshed.get(id) || 0) < 30_000) return;
   refreshed.set(id, Date.now());
+  crumb('checking for shared updates');
   api<{ body: DocBody | null }>(`/api/doc?id=${encodeURIComponent(id)}`)
     .then(async (r) => {
       if (!r.body) return;
       const merged = mergeShared(r.body, local) as DocBody;
       // Your own chat: keep whichever copy has more.
       if ((r.body.chat?.length || 0) > (local.chat?.length || 0)) merged.chat = r.body.chat;
-      if (JSON.stringify(merged) === JSON.stringify(local)) return;
+      if (JSON.stringify(merged) === JSON.stringify(local)) return crumb('shared: no changes');
+      crumb('shared: saving updates');
       await kvSet(`rise:doc:${id}`, merged);
       window.dispatchEvent(new CustomEvent('rise-body', { detail: id }));
     })

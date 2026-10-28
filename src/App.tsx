@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { boot, getState, patchDoc, pull, saveNow, useApp } from './lib/store';
 import { go, useView } from './lib/nav';
-import { cleanOldAudio, player } from './lib/speech';
+import { player } from './lib/speech';
 import { crumb } from './lib/crumbs';
 import { prewarmNatural } from './lib/localtts';
 import { safeMode } from './lib/crumbs';
@@ -45,8 +45,6 @@ export default function App() {
     if (!ready) return;
     const t = setTimeout(async () => {
       for (const d of Object.values(getState().docs)) if (d.offline?.audio?.startsWith('neural|')) patchDoc(d.id, (m) => m.offline && delete m.offline.audio);
-      const n = await cleanOldAudio();
-      if (n) crumb(`cleared ${n} old silent clips`);
     }, 4000);
     return () => clearTimeout(t);
   }, [ready]);

@@ -7,6 +7,21 @@ import { createStore, get as idbGet, set as idbSet, del as idbDel, delMany as id
 import { holdAwake, isOnline, whenVisible } from './online';
 import { clearPrefetch, localNatural, neuralReady, neuralSpeak } from './localtts';
 
+/*
+ * One time only: the saved-audio store held thousands of silent clips from before Oct 27. Deleting them one by one
+ * crashed iPhones, so the whole store is dropped in a single step instead. The flag is set first so this can never
+ * repeat, even if the phone is interrupted.
+ */
+(() => {
+  try {
+    if (typeof indexedDB === 'undefined' || localStorage.getItem('rise-audio-v2')) return;
+    localStorage.setItem('rise-audio-v2', '1');
+    indexedDB.deleteDatabase('rise-audio');
+  } catch {
+    /* storage blocked */
+  }
+})();
+
 let audioStore: ReturnType<typeof createStore> | null = null;
 const clipStore = () => (audioStore ||= createStore('rise-audio', 'clips'));
 interface StoredClip {
@@ -840,13 +855,3 @@ export function audioEstimateMB(words: number): number {
   return Math.max(1, Math.round(words / 165));
 }
 
-/** Clears out Natural voice audio saved before the Oct 27 fix (it was silent), so it stops taking up space. */
-export async function cleanOldAudio(): Promise<number> {
-  try {
-    const old = (await idbKeys(clipStore())).filter((k) => typeof k === 'string' && k.startsWith('neural|'));
-    for (let i = 0; i < old.length; i += 500) await idbDelMany(old.slice(i, i + 500), clipStore());
-    return old.length;
-  } catch {
-    return 0;
-  }
-}
