@@ -782,3 +782,34 @@ mark.w {
     padding-bottom: calc(var(--dock-h, 100px) + 40px);
   }
 }
+
+/* ---------- stability on phones ----------
+   Frosted-glass blur layers over text that changes while reading (the moving highlight) make iPhone Safari
+   repaint constantly, and on long books that can crash the page. On phones and tablets: no blur, solid bars. */
+@media (max-width: 899px), (hover: none) {
+  * {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  .topbar,
+  .tabbar,
+  .player,
+  .player-error,
+  .toast {
+    background: var(--surface) !important;
+  }
+  .doc-tabs {
+    background: var(--bg) !important;
+  }
+  .sheet-backdrop {
+    background: rgba(0, 0, 0, 0.35);
+  }
+}
+/* The reading highlight: plain color only (shadows on multi-line text are expensive to redraw). */
+.s.on {
+  box-shadow: none;
+  border-radius: 4px;
+}
+mark.w {
+  box-shadow: none;
+}

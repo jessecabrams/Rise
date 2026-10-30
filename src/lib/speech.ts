@@ -358,6 +358,8 @@ class Player {
     };
   }
   private set(patch: Partial<PlayerState>) {
+    // Safe mode (after repeated crashes): no moving word highlight.
+    if (safeMode && patch.word) patch = { ...patch, word: null };
     if (patch.error && patch.error !== this.s.error) reportProblem(patch.error);
     this.s = { ...this.s, ...patch };
     this.subs.forEach((f) => f());

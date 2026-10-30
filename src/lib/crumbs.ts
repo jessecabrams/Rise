@@ -48,7 +48,7 @@ export function startCrumbs() {
   window.addEventListener('pagehide', () => store(CLEAN, '1'));
   // Running steadily for a while: no longer counts toward a crash streak.
   setTimeout(() => store(CRASHES, '0'), 45_000);
-  crumb(`start ${navigator.userAgent.replace(/^Mozilla\/5\.0 /, '').slice(0, 90)}${safeMode ? ' SAFE MODE' : ''}`);
+  crumb(`start v${typeof __RISE_BUILD__ !== 'undefined' ? __RISE_BUILD__ : 'dev'} ${navigator.userAgent.replace(/^Mozilla\/5\.0 /, '').slice(0, 90)}${safeMode ? ' SAFE MODE' : ''}`);
   if (!clean && prev) {
     let key = '';
     try {
