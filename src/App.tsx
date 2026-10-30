@@ -44,7 +44,7 @@ export default function App() {
   useEffect(() => {
     if (!ready) return;
     const t = setTimeout(async () => {
-      for (const d of Object.values(getState().docs)) if (d.offline?.audio?.startsWith('neural|')) patchDoc(d.id, (m) => m.offline && delete m.offline.audio);
+      for (const d of Object.values(getState().docs)) if (/^neural2?\|/.test(d.offline?.audio || '')) patchDoc(d.id, (m) => m.offline && delete m.offline.audio);
     }, 4000);
     return () => clearTimeout(t);
   }, [ready]);

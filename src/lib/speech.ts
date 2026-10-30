@@ -14,8 +14,8 @@ import { clearPrefetch, localNatural, neuralReady, neuralSpeak } from './localtt
  */
 (() => {
   try {
-    if (typeof indexedDB === 'undefined' || localStorage.getItem('rise-audio-v2')) return;
-    localStorage.setItem('rise-audio-v2', '1');
+    if (typeof indexedDB === 'undefined' || localStorage.getItem('rise-audio-v3')) return;
+    localStorage.setItem('rise-audio-v3', '1');
     indexedDB.deleteDatabase('rise-audio');
   } catch {
     /* storage blocked */
@@ -105,7 +105,7 @@ function voiceChain(): Voice[] {
  * The prefix for a voice's saved audio. Natural voice audio saved before Oct 27, 2026 was silent
  * (an encoder bug), so it lives under an old prefix and is never used again.
  */
-export const vk = (v: { provider: string; voice: string; style: string }) => `${v.provider === 'neural' ? 'neural2' : v.provider}|${v.voice}|${v.style}`;
+export const vk = (v: { provider: string; voice: string; style: string }) => `${v.provider === 'neural' ? 'neural3' : v.provider}|${v.voice}|${v.style}`;
 
 /** Identifies the current voice's saved audio, or null for device voices. */
 export function voiceKey(): string | null {
@@ -184,7 +184,7 @@ function silentClip(): StoredClip {
   const bin = atob(SILENCE.split(',')[1]);
   const bytes = new Uint8Array(bin.length);
   for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
-  return { mime: 'audio/mpeg', bytes: bytes.buffer, starts: null };
+  return { mime: 'audio/wav', bytes: bytes.buffer, starts: null };
 }
 
 function fetchClip(text: string, persist = false, v: Voice = cloudVoice()!, pri = 0): Promise<Clip> {
@@ -297,18 +297,21 @@ export type { StoredClip, Voice };
 
 /* ---------- player ---------- */
 // A tiny silent sound, used to unlock audio on iPhone during the tap on play.
-/** Tell iPhone this is a listening app: play through the speaker even with the ringer on silent, like Music or Podcasts. */
 function mediaSession() {
-  try {
-    const s = (navigator as any).audioSession;
-    if (s && s.type !== 'playback') s.type = 'playback';
-  } catch {
-    /* older browsers */
-  }
+  /* left to the browser's defaults */
 }
-if (typeof navigator !== 'undefined') mediaSession();
 const speaking = () => typeof speechSynthesis !== 'undefined' && (speechSynthesis.speaking || speechSynthesis.pending);
-const SILENCE = 'data:audio/mpeg;base64,//NAxAAAAANIAAAAAExBTUUDAAkIAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/80LEAAAAA0gAAAAATEFNRQMACQgABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/80DEAAAAA0gAAAAATEFNRQMACQgABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/zQsQAAAADSAAAAABMQU1FAwAJCAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/zQMQAAAADSAAAAABMQU1FAwAJCAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//NCxAAAAANIAAAAAExBTUUDAAkIAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+/** A tenth of a second of silence as a plain WAV file: the simplest audio there is, safe on every device. */
+const SILENCE = (() => {
+  const rate = 8000, n = 800, b = new DataView(new ArrayBuffer(44 + n * 2));
+  const w = (o: number, s: string) => [...s].forEach((c, i) => b.setUint8(o + i, c.charCodeAt(0)));
+  w(0, 'RIFF'); b.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+  b.setUint32(16, 16, true); b.setUint16(20, 1, true); b.setUint16(22, 1, true); b.setUint32(24, rate, true);
+  b.setUint32(28, rate * 2, true); b.setUint16(32, 2, true); b.setUint16(34, 16, true); w(36, 'data'); b.setUint32(40, n * 2, true);
+  let s = '';
+  new Uint8Array(b.buffer).forEach((x) => (s += String.fromCharCode(x)));
+  return 'data:audio/wav;base64,' + btoa(s);
+})();
 let unlockedSpeech = false;
 
 export interface PlayerState {
@@ -585,7 +588,7 @@ class Player {
     crumb(`playing ${i}`);
     this.set({ loading: false });
     // Keep several sentences ready ahead of the one playing, so there are no gaps.
-    const ahead = used.provider === 'neural' ? 8 : 3;
+    const ahead = used.provider === 'neural' ? (/iPhone|iPad|iPod/.test(navigator.userAgent) ? 4 : 8) : 3;
     for (let k = 1; k <= ahead; k++) if (this.sentences[i + k]) fetchClip(this.sentences[i + k], false, used, k).catch(() => {});
     // This computer fell behind recently: have the cloud help with the next few so there are no more pauses.
     if (used.provider === 'neural' && Date.now() < behindUntil && getState().settings.naturalWhere === 'device' && server.has('kokoro') && isOnline()) {

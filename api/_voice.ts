@@ -130,11 +130,7 @@ export interface VoiceClip {
 
 /** One sentence of Natural voice audio as small MP3. Empty audio comes back as an empty string (a pause). */
 export async function kokoroClip(text: string, voice: string): Promise<VoiceClip> {
-  const wav = await deepinfra(text, voice, 'wav');
-  const pcm = readWav(wav);
-  if (pcm && pcm.samples.length) return { audio: toMp3(pcm).toString('base64'), mime: 'audio/mpeg', starts: null };
-  if (pcm && !pcm.samples.length) return { audio: '', mime: 'audio/mpeg', starts: null };
-  // Not a WAV we can read: fall back to DeepInfra's own MP3.
+  // DeepInfra's own MP3. (Re-encoding it here to save space produced files some iPhones could not play safely.)
   const mp3 = await deepinfra(text, voice, 'mp3');
   return { audio: mp3.length > 100 ? mp3.toString('base64') : '', mime: 'audio/mpeg', starts: null };
 }
