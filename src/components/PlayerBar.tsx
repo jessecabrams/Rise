@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Icon, Sheet } from './ui';
 import { player, usePlayer } from '../lib/speech';
 import { useApp } from '../lib/store';
@@ -10,28 +10,14 @@ export function PlayerBar() {
   const rate = useApp((s) => s.settings.rate);
   const view = useView();
   const [sheet, setSheet] = useState<'voice' | 'speed' | null>(null);
-  // Messages show for a few seconds, then get out of the way. Tap to dismiss sooner.
-  const [showError, setShowError] = useState(false);
-  useEffect(() => {
-    if (!p.error) return;
-    setShowError(true);
-    const t = setTimeout(() => setShowError(false), 6000);
-    return () => clearTimeout(t);
-  }, [p.error]);
   if (!p.docId) return null;
-  // While you're answering questions or reading a guide, the paused player steps aside. It comes back when reading.
-  const busyTab = view.name === 'doc' && view.id === p.docId && view.tab !== 'listen';
-  if (busyTab && !p.playing && !p.loading) return null;
+  // On Learn, Quiz, Map and Ask the paused player steps aside so it can't cover answers.
+  if (view.name === 'doc' && view.id === p.docId && view.tab !== 'listen' && !p.playing && !p.loading) return null;
   const pct = p.total ? (p.index + 1) / p.total : 0;
   const onDoc = view.name === 'doc' && view.id === p.docId;
 
   return (
     <>
-      {p.error && showError && (
-        <div className="player-error" role="status" onClick={() => setShowError(false)}>
-          {p.error}
-        </div>
-      )}
       <div className="player" role="region" aria-label="Audio player">
         <div className="player-progress" style={{ width: `${pct * 100}%` }} aria-hidden="true" />
         <button className="player-title" onClick={() => go({ name: 'doc', id: p.docId!, tab: 'listen' })} disabled={onDoc} title="Open">
@@ -50,10 +36,10 @@ export function PlayerBar() {
           </button>
         </div>
         <div className="player-extras">
-          <button className="pill speed-pill" onClick={() => setSheet('speed')} aria-label="Reading speed">
+          <button className="pill" onClick={() => setSheet('speed')} aria-label="Reading speed">
             <span className="tabular">{rate.toFixed(2).replace(/\.?0+$/, '')}×</span>
           </button>
-          <button className="pill voice-pill" onClick={() => setSheet('voice')} aria-label="Choose voice">
+          <button className="pill" onClick={() => setSheet('voice')} aria-label="Choose voice">
             <Icon name="wave" size={18} />
             <span className="hide-sm">Voice</span>
           </button>
@@ -62,6 +48,7 @@ export function PlayerBar() {
           </button>
         </div>
       </div>
+      {p.error && <div className="player-error" role="status">{p.error}</div>}
       <Sheet open={sheet === 'voice'} onClose={() => setSheet(null)} title="Voice">
         <VoicePicker />
       </Sheet>

@@ -87,10 +87,7 @@ async function meter(stream: MediaStream, onSilence?: () => void) {
 }
 
 export async function startListening(opts: Options = {}): Promise<Listening> {
-  // On iPhone, the phone's own speech recognition is lighter than running a speech model in the page,
-  // so the on-device model is only used there when there's no connection.
-  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
-  const local = !cloudStt() && localStt() && !(ios && SR && isOnline());
+  const local = !cloudStt() && localStt();
   if (cloudStt() || local) {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
     const mime = pickMime();

@@ -3,24 +3,9 @@ import { useSyncExternalStore } from 'react';
 import { getState } from './store';
 import { api, server } from './api';
 import { wordAt } from './text';
-import { createStore, get as idbGet, set as idbSet, del as idbDel, delMany as idbDelMany, keys as idbKeys, setMany as idbSetMany } from 'idb-keyval';
-import { holdAwake, isOnline, whenVisible } from './online';
+import { createStore, get as idbGet, set as idbSet, del as idbDel } from 'idb-keyval';
+import { isOnline } from './online';
 import { clearPrefetch, localNatural, neuralReady, neuralSpeak } from './localtts';
-
-/*
- * One time only: the saved-audio store held thousands of silent clips from before Oct 27. Deleting them one by one
- * crashed iPhones, so the whole store is dropped in a single step instead. The flag is set first so this can never
- * repeat, even if the phone is interrupted.
- */
-(() => {
-  try {
-    if (typeof indexedDB === 'undefined' || localStorage.getItem('rise-audio-v3')) return;
-    localStorage.setItem('rise-audio-v3', '1');
-    indexedDB.deleteDatabase('rise-audio');
-  } catch {
-    /* storage blocked */
-  }
-})();
 
 let audioStore: ReturnType<typeof createStore> | null = null;
 const clipStore = () => (audioStore ||= createStore('rise-audio', 'clips'));
@@ -101,16 +86,10 @@ function voiceChain(): Voice[] {
   return [main, backup].filter(Boolean) as Voice[];
 }
 
-/**
- * The prefix for a voice's saved audio. Natural voice audio saved before Oct 27, 2026 was silent
- * (an encoder bug), so it lives under an old prefix and is never used again.
- */
-export const vk = (v: { provider: string; voice: string; style: string }) => `${v.provider === 'neural' ? 'neural3' : v.provider}|${v.voice}|${v.style}`;
-
 /** Identifies the current voice's saved audio, or null for device voices. */
 export function voiceKey(): string | null {
   const v = cloudVoice();
-  return v ? `${vk(v)}` : null;
+  return v ? `${v.provider}|${v.voice}|${v.style}` : null;
 }
 
 /** Can audio for the current voice be downloaded right now? */
@@ -139,7 +118,6 @@ async function cloudClip(text: string, v: Voice): Promise<StoredClip> {
     method: 'POST',
     body: { text, provider: v.provider === 'neural' ? 'kokoro' : v.provider, voice: v.voice, style: v.style }
   });
-  if (!r.audio) return silentClip();
   const bin = atob(r.audio);
   const bytes = new Uint8Array(bin.length);
   for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
@@ -184,11 +162,11 @@ function silentClip(): StoredClip {
   const bin = atob(SILENCE.split(',')[1]);
   const bytes = new Uint8Array(bin.length);
   for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
-  return { mime: 'audio/wav', bytes: bytes.buffer, starts: null };
+  return { mime: 'audio/mpeg', bytes: bytes.buffer, starts: null };
 }
 
 function fetchClip(text: string, persist = false, v: Voice = cloudVoice()!, pri = 0): Promise<Clip> {
-  const key = `${vk(v)}|${text}`;
+  const key = `${v.provider}|${v.voice}|${v.style}|${text}`;
   const hit = clips.get(key);
   if (hit) return hit;
   const p = (async (): Promise<Clip> => {
@@ -244,7 +222,7 @@ async function urgentClip(text: string, v: Voice): Promise<Clip> {
 
 /** Races the cloud against this computer for one sentence; the faster one wins and is kept. */
 function withCloud(text: string, v: Voice): Promise<Clip> {
-  const key = `${vk(v)}|${text}`;
+  const key = `${v.provider}|${v.voice}|${v.style}|${text}`;
   const local = clips.get(key) || fetchClip(text, false, v, 1);
   if (ready.has(key)) return local;
   const fromCloud = cloudClip(text, v).then(async (made) => {
@@ -266,7 +244,7 @@ function withCloud(text: string, v: Voice): Promise<Clip> {
 
 /** Saved audio for one sentence, for building audio packs. */
 export async function clipBytes(text: string, v: Voice = cloudVoice()!, pri = 1): Promise<StoredClip> {
-  const key = `${vk(v)}|${text}`;
+  const key = `${v.provider}|${v.voice}|${v.style}|${text}`;
   try {
     const s = await idbGet<StoredClip>(key, clipStore());
     if (s) return s;
@@ -297,21 +275,7 @@ export type { StoredClip, Voice };
 
 /* ---------- player ---------- */
 // A tiny silent sound, used to unlock audio on iPhone during the tap on play.
-function mediaSession() {
-  /* left to the browser's defaults */
-}
-const speaking = () => typeof speechSynthesis !== 'undefined' && (speechSynthesis.speaking || speechSynthesis.pending);
-/** A tenth of a second of silence as a plain WAV file: the simplest audio there is, safe on every device. */
-const SILENCE = (() => {
-  const rate = 8000, n = 800, b = new DataView(new ArrayBuffer(44 + n * 2));
-  const w = (o: number, s: string) => [...s].forEach((c, i) => b.setUint8(o + i, c.charCodeAt(0)));
-  w(0, 'RIFF'); b.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
-  b.setUint32(16, 16, true); b.setUint16(20, 1, true); b.setUint16(22, 1, true); b.setUint32(24, rate, true);
-  b.setUint32(28, rate * 2, true); b.setUint16(32, 2, true); b.setUint16(34, 16, true); w(36, 'data'); b.setUint32(40, n * 2, true);
-  let s = '';
-  new Uint8Array(b.buffer).forEach((x) => (s += String.fromCharCode(x)));
-  return 'data:audio/wav;base64,' + btoa(s);
-})();
+const SILENCE = 'data:audio/mpeg;base64,//NAxAAAAANIAAAAAExBTUUDAAkIAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/80LEAAAAA0gAAAAATEFNRQMACQgABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/80DEAAAAA0gAAAAATEFNRQMACQgABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/zQsQAAAADSAAAAABMQU1FAwAJCAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/zQMQAAAADSAAAAABMQU1FAwAJCAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//NCxAAAAANIAAAAAExBTUUDAAkIAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 let unlockedSpeech = false;
 
 export interface PlayerState {
@@ -358,8 +322,6 @@ class Player {
     };
   }
   private set(patch: Partial<PlayerState>) {
-    // Safe mode (after repeated crashes): no moving word highlight.
-    if (safeMode && patch.word) patch = { ...patch, word: null };
     if (patch.error && patch.error !== this.s.error) reportProblem(patch.error);
     this.s = { ...this.s, ...patch };
     this.subs.forEach((f) => f());
@@ -383,7 +345,6 @@ class Player {
    * "unlocks" the audio player and the speech engine right away.
    */
   private unlock() {
-    mediaSession();
     try {
       if (!this.audio) this.audio = new Audio();
       const a = this.audio;
@@ -395,9 +356,7 @@ class Player {
       /* not supported */
     }
     try {
-      // Only wake the phone's speech engine when it will actually be used. Touching it switches iPhone
-      // audio into a mode that follows the silent switch and can pause other sound.
-      if (typeof speechSynthesis !== 'undefined' && !unlockedSpeech && !cloudVoice()) {
+      if (typeof speechSynthesis !== 'undefined' && !unlockedSpeech) {
         const u = new SpeechSynthesisUtterance(' ');
         u.volume = 0;
         speechSynthesis.speak(u);
@@ -456,7 +415,7 @@ class Player {
   private stopAll() {
     this.token++;
     cancelAnimationFrame(this.raf);
-    if (speaking()) speechSynthesis.cancel();
+    if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
     if (this.audio) {
       this.audio.onended = null;
       this.audio.pause();
@@ -522,7 +481,7 @@ class Player {
           await sleep(700);
           if (tok !== this.token) return;
           try {
-            clips.delete(`${vk(v)}|${this.sentences[i]}`);
+            clips.delete(`${v.provider}|${v.voice}|${v.style}|${this.sentences[i]}`);
             clip = await urgentClip(this.sentences[i], v);
             used = v;
             break;
@@ -555,8 +514,6 @@ class Player {
     if (!this.audio) this.audio = new Audio();
     const a = this.audio;
     a.src = clip.url;
-    a.muted = false;
-    a.volume = 1;
     a.playbackRate = getState().settings.rate;
     (a as any).preservesPitch = true;
     a.onended = () => {
@@ -566,7 +523,7 @@ class Player {
     a.onerror = () => {
       if (tok !== this.token) return;
       crumb(`audio error on ${i}: ${a.error?.code || '?'}`);
-      clips.delete(`${vk(used!)}|${this.sentences[i]}`);
+      clips.delete(`${used!.provider}|${used!.voice}|${used!.style}|${this.sentences[i]}`);
       this.done(i, tok);
     };
     // The phone paused the sound itself (a call, another app, a notification): show it as paused.
@@ -590,7 +547,7 @@ class Player {
     crumb(`playing ${i}`);
     this.set({ loading: false });
     // Keep several sentences ready ahead of the one playing, so there are no gaps.
-    const ahead = used.provider === 'neural' ? (/iPhone|iPad|iPod/.test(navigator.userAgent) ? 4 : 8) : 3;
+    const ahead = used.provider === 'neural' ? 8 : 3;
     for (let k = 1; k <= ahead; k++) if (this.sentences[i + k]) fetchClip(this.sentences[i + k], false, used, k).catch(() => {});
     // This computer fell behind recently: have the cloud help with the next few so there are no more pauses.
     if (used.provider === 'neural' && Date.now() < behindUntil && getState().settings.naturalWhere === 'device' && server.has('kokoro') && isOnline()) {
@@ -655,7 +612,7 @@ let sayToken = 0;
 export function stopSay() {
   sayToken++;
   if (sayAudio) sayAudio.pause();
-  if (speaking() && !player.s.playing) speechSynthesis.cancel();
+  if (typeof speechSynthesis !== 'undefined' && !player.s.playing) speechSynthesis.cancel();
 }
 
 /** Speaks text with the current voice. Resolves when finished or stopped. */
@@ -711,137 +668,39 @@ function sayDevice(text: string): Promise<void> {
   });
 }
 
-/** Which sentences already have saved audio for a voice. One quick look at the list of keys, no audio is read. */
-export async function savedSet(key: string): Promise<Set<string>> {
-  const out = new Set<string>();
-  try {
-    const prefix = `${key}|`;
-    for (const k of await idbKeys(clipStore())) if (typeof k === 'string' && k.startsWith(prefix)) out.add(k.slice(prefix.length));
-  } catch {
-    /* storage blocked */
-  }
-  return out;
-}
-
-export interface DownloadResult {
-  saved: number;
-  failed: number;
-}
-
-function b64(s: string): ArrayBuffer {
-  const bin = atob(s);
-  const bytes = new Uint8Array(bin.length);
-  for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
-  return bytes.buffer;
-}
-
-/**
- * Saves voice audio for these sentences so they play offline. Already-saved sentences are skipped, so a stopped
- * download picks up where it left off. The Natural voice is fetched from the cloud ten sentences per request,
- * several requests at once. While the phone is locked the download waits instead of failing.
- */
-export async function downloadAudio(sentences: string[], onPct: (p: number) => void, cancel: { current: boolean }): Promise<DownloadResult> {
-  const key = voiceKey();
-  const v = cloudVoice();
-  if (!key || !v) return { saved: 0, failed: 0 };
-  const unique = [...new Set(sentences)].filter(speakable);
-  const have = await savedSet(key);
-  const todo = unique.filter((t) => !have.has(t));
-  const total = unique.length;
-  let done = total - todo.length;
-  let failed = 0;
-  onPct(total ? done / total : 1);
-  if (!todo.length) return { saved: 0, failed: 0 };
-  const release = await holdAwake();
-  const batched = v.provider === 'neural' && server.has('kokoro') && getState().settings.naturalWhere !== 'device';
-  try {
-    if (batched) {
-      let groups: string[][] = [];
-      for (let i = 0; i < todo.length; i += 10) groups.push(todo.slice(i, i + 10));
-      let next = 0;
-      let fatal: Error | null = null;
-      let missed: string[] = [];
-      const lane = async () => {
-        while (next < groups.length && !cancel.current && !fatal) {
-          const g = groups[next++];
-          for (let attempt = 0; ; attempt++) {
-            await whenVisible();
-            if (cancel.current || fatal) return;
-            try {
-              if (!isOnline()) throw new Error('offline');
-              const r = await api<{ clips: ({ audio: string; mime: string } | { error: string })[] }>('/api/tts', {
-                method: 'POST',
-                body: { texts: g, provider: 'kokoro', voice: v.voice }
-              });
-              const entries: [string, StoredClip][] = [];
-              r.clips.forEach((c, k) => {
-                if (!c || 'error' in c) return missed.push(g[k]);
-                entries.push([`${key}|${g[k]}`, c.audio ? { mime: c.mime, bytes: b64(c.audio), starts: null } : silentClip()]);
-              });
-              try {
-                await idbSetMany(entries, clipStore());
-              } catch {
-                throw Object.assign(new Error('This device is out of space for audio. Remove downloads you no longer need, then try again.'), { fatal: true });
-              }
-              done += entries.length;
-              onPct(done / total);
-              break;
-            } catch (e: any) {
-              if (e?.fatal || /key|balance/i.test(e?.message || '')) {
-                fatal = e;
-                return;
-              }
-              if (attempt >= 5) {
-                failed += g.length;
-                break;
-              }
-              await sleep(Math.min(8000, 600 * 2 ** attempt));
-            }
-          }
-        }
-      };
-      await Promise.all([lane(), lane(), lane()]);
-      // A second pass for any sentences that hit a hiccup.
-      if (missed.length && !cancel.current && !fatal) {
-        groups = [];
-        for (let i = 0; i < missed.length; i += 5) groups.push(missed.slice(i, i + 5));
-        missed = [];
-        next = 0;
-        await Promise.all([lane(), lane()]);
+/** Saves studio-voice audio for every sentence so the piece plays offline. */
+export async function downloadAudio(sentences: string[], onPct: (p: number) => void, cancel: { current: boolean }) {
+  if (!voiceKey()) return;
+  let next = 0;
+  let done = 0;
+  const work = async () => {
+    while (next < sentences.length && !cancel.current) {
+      const i = next++;
+      const text = sentences[i];
+      const key = `${voiceKey()}|${text}`;
+      let have = false;
+      try {
+        have = !!(await idbGet(key, clipStore()));
+      } catch {
+        have = false;
       }
-      failed += missed.length;
-      if (fatal) throw fatal;
-    } else {
-      let next = 0;
-      const lane = async () => {
-        while (next < todo.length && !cancel.current) {
-          const text = todo[next++];
-          for (let attempt = 0; ; attempt++) {
-            await whenVisible();
-            if (cancel.current) return;
-            try {
-              clips.delete(`${vk(v)}|${text}`);
-              await fetchClip(text, true, v, BULK + 1);
-              done++;
-              onPct(done / total);
-              break;
-            } catch (e: any) {
-              if (/key|balance/i.test(e?.message || '')) throw e;
-              if (attempt >= 3) {
-                failed++;
-                break;
-              }
-              await sleep(800 * (attempt + 1));
-            }
+      if (!have) {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            clips.delete(key);
+            await fetchClip(text, true, cloudVoice()!, BULK + 1);
+            break;
+          } catch (e: any) {
+            if (attempt === 2) throw e;
+            await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
           }
         }
-      };
-      await Promise.all(Array.from({ length: v.provider === 'neural' ? 4 : 6 }, () => lane()));
+      }
+      onPct(++done / sentences.length);
     }
-  } finally {
-    release();
-  }
-  return { saved: done, failed };
+  };
+  // Cloud voices can make many sentences at once; this computer's engine works through its own queue anyway.
+  await Promise.all(Array.from({ length: 8 }, () => work()));
 }
 
 /** Deletes downloaded studio-voice audio for these sentences. */
@@ -859,4 +718,3 @@ export async function removeAudio(sentences: string[], key: string) {
 export function audioEstimateMB(words: number): number {
   return Math.max(1, Math.round(words / 165));
 }
-

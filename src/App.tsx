@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { boot, getState, patchDoc, pull, saveNow, useApp } from './lib/store';
 import { go, useView } from './lib/nav';
 import { player } from './lib/speech';
-import { crumb } from './lib/crumbs';
 import { prewarmNatural } from './lib/localtts';
 import { safeMode } from './lib/crumbs';
 import { award, dayKey, levelInfo } from './lib/game';
@@ -26,28 +25,6 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const online = useOnline();
   const provider = useApp((s) => s.settings.provider);
-  // The page always leaves room for the player and tab bar at the bottom, however tall they are,
-  // so nothing (like quiz answers) ends up hidden underneath.
-  const dockRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = dockRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const set = () => document.documentElement.style.setProperty('--dock-h', `${Math.ceil(el.getBoundingClientRect().height)}px`);
-    const ro = new ResizeObserver(set);
-    ro.observe(el);
-    set();
-    return () => ro.disconnect();
-  });
-
-  // Once, a little after launch: remove the silent audio saved before the Oct 27 fix, and the
-  // "downloaded" marks that pointed to it.
-  useEffect(() => {
-    if (!ready) return;
-    const t = setTimeout(async () => {
-      for (const d of Object.values(getState().docs)) if (/^neural2?\|/.test(d.offline?.audio || '')) patchDoc(d.id, (m) => m.offline && delete m.offline.audio);
-    }, 4000);
-    return () => clearTimeout(t);
-  }, [ready]);
 
   // Start the Natural voice in the background, so pressing play doesn't wait for it.
   useEffect(() => {
@@ -229,7 +206,7 @@ export default function App() {
         )}
       </main>
 
-      <div className="dock" ref={dockRef}>
+      <div className="dock">
         <PlayerBar />
         <nav className="tabbar" aria-label="Main">
           {nav.map((n) => (
