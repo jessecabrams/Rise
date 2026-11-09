@@ -133,6 +133,8 @@ export const BULK = 10;
  * on this computer. Downloads and audio files are made on this computer when it can, since that's free.
  */
 async function naturalClip(text: string, v: Voice, pri: number): Promise<StoredClip> {
+  // If the first server check failed on a weak signal, check again before giving up on the cloud voice.
+  if (!server.ok() && isOnline()) await server.ensure();
   const cloud = server.has('kokoro') && isOnline();
   const local = localNatural() || (neuralReady() && !cloud);
   // The cloud is much faster, so it's used for downloads too unless you chose to make audio on this computer.

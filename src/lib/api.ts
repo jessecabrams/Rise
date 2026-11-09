@@ -38,6 +38,7 @@ function set(patch: Partial<ServerState>) {
   subs.forEach((f) => f());
 }
 
+let retries = 0;
 export const server = {
   get state() {
     return snapshot;
@@ -49,10 +50,17 @@ export const server = {
   has(f: keyof Features): boolean {
     return server.ok() && !!snapshot.features?.[f];
   },
+  /** Checks the server again if the last check failed (a slow phone signal can make the first check time out). */
+  async ensure(): Promise<boolean> {
+    if (server.ok()) return true;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
+    await server.probe();
+    return server.ok();
+  },
   async probe(): Promise<ServerState> {
     try {
       const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 5000);
+      const t = setTimeout(() => ctrl.abort(), 15000);
       const r = await fetch('/api/health', { headers: { 'x-rise-key': getKey() }, signal: ctrl.signal });
       clearTimeout(t);
       const data = await r.json();
@@ -60,7 +68,14 @@ export const server = {
       set({ checked: true, reachable: true, passcode: !!data.passcode, authed: !!data.authed, features: data.features, profile: data.profile || null });
     } catch {
       set({ checked: true, reachable: false });
+      // Try again shortly, a few times, instead of giving up until the next restart.
+      if (retries < 5) {
+        retries++;
+        setTimeout(() => server.probe(), 3000 * retries);
+      }
+      return snapshot;
     }
+    retries = 0;
     return snapshot;
   }
 };
