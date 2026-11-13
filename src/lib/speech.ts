@@ -286,10 +286,10 @@ export type { StoredClip, Voice };
 /* ---------- player ---------- */
 let statusSent = false;
 /** Once per launch, after the first sentence plays, send the step notes so sound problems can be traced. */
-function statusOnce() {
+function statusOnce(what = 'first sentence played') {
   if (statusSent) return;
   statusSent = true;
-  setTimeout(() => reportProblem('status: first sentence played'), 4000);
+  setTimeout(() => reportProblem(`status: ${what}`), 4000);
 }
 
 // A tiny silent sound, used to unlock audio on iPhone during the tap on play.
@@ -458,6 +458,7 @@ class Player {
       return;
     }
     this.set({ engine: 'device', loading: false });
+    statusOnce(`device voice, chosen voice ${getState().settings.provider}${safeMode ? ', safe mode' : ''}`);
     const text = this.sentences[i];
     const u = new SpeechSynthesisUtterance(text);
     const v = pickDeviceVoice();

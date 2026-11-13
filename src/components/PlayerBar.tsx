@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Icon, Sheet } from './ui';
 import { player, usePlayer } from '../lib/speech';
-import { useApp } from '../lib/store';
+import { setSettings, useApp } from '../lib/store';
+import { useServer } from '../lib/api';
 import { go, useView } from '../lib/nav';
 import { SpeedControl, VoicePicker } from './VoicePicker';
 
@@ -9,12 +10,15 @@ export function PlayerBar() {
   const p = usePlayer();
   const rate = useApp((s) => s.settings.rate);
   const view = useView();
+  const srv = useServer();
   const [sheet, setSheet] = useState<'voice' | 'speed' | null>(null);
   if (!p.docId) return null;
   // On Learn, Quiz, Map and Ask the paused player steps aside so it can't cover answers.
   if (view.name === 'doc' && view.id === p.docId && view.tab !== 'listen' && !p.playing && !p.loading) return null;
   const pct = p.total ? (p.index + 1) / p.total : 0;
   const onDoc = view.name === 'doc' && view.id === p.docId;
+  // iPhone's own voice follows the silent switch, so say so while it's the one reading.
+  const quiet = !p.error && p.playing && p.engine === 'device' && /iPhone|iPad|iPod/.test(navigator.userAgent);
 
   return (
     <>
@@ -49,6 +53,24 @@ export function PlayerBar() {
         </div>
       </div>
       {p.error && <div className="player-error" role="status">{p.error}</div>}
+      {quiet && (
+        <div className="player-error" role="status">
+          No sound? Rise is using the iPhone's built-in voice, which is silent when the ringer switch is off.{' '}
+          {srv.features?.kokoro && srv.authed !== false ? (
+            <button
+              className="link-btn"
+              onClick={() => {
+                setSettings({ provider: 'neural' });
+                player.play();
+              }}
+            >
+              Switch to the Natural voice
+            </button>
+          ) : (
+            'Flip the ringer switch on, or turn the volume up.'
+          )}
+        </div>
+      )}
       <Sheet open={sheet === 'voice'} onClose={() => setSheet(null)} title="Voice">
         <VoicePicker />
       </Sheet>
