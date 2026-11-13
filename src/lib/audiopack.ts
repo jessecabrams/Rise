@@ -1,4 +1,4 @@
-import { BULK, clipBytes, naturalVoice, saveClip, sayChunks } from './speech';
+import { BULK, clipBytes, naturalVoice, saveClip, sayChunks, vk } from './speech';
 import { getState, patchDoc, setSettings } from './store';
 import type { Chapter, Structured } from './text';
 import type { DocBody } from './types';
@@ -47,7 +47,7 @@ export async function makeAudioPacks(
   cancel: { current: boolean }
 ): Promise<PackFile[]> {
   const v = naturalVoice();
-  const key = `${v.provider}|${v.voice}|${v.style}`;
+  const key = vk(v);
   const all = chs.length === 0;
   const texts: string[] = [];
   const seen = new Set<string>();
@@ -169,6 +169,8 @@ export async function importAudioPack(file: File, onPct?: (p: number) => void): 
   const mf = zip.file(MANIFEST);
   if (!mf) throw new Error('That zip file is not a Rise audio file.');
   const m: Manifest = JSON.parse(await mf.async('string'));
+  // Audio files made by older versions used an older label; file them under the current one.
+  const key = m.key.replace(/^neural\d*\|/, 'neural4|');
   if (m.app !== 'rise' || m.kind !== 'audio') throw new Error('That zip file is not a Rise audio file.');
   let n = 0;
   for (const c of m.clips) {
@@ -176,7 +178,7 @@ export async function importAudioPack(file: File, onPct?: (p: number) => void): 
     if (!f) continue;
     const bytes: ArrayBuffer = await f.async('arraybuffer');
     try {
-      await saveClip(m.key, c.t, { mime: c.m || 'audio/mpeg', bytes, starts: null });
+      await saveClip(key, c.t, { mime: c.m || 'audio/mpeg', bytes, starts: null });
     } catch {
       throw new Error(`This device ran out of space after ${n} sentences. Free some space and try again.`);
     }
@@ -186,7 +188,7 @@ export async function importAudioPack(file: File, onPct?: (p: number) => void): 
   const onDevice = !!getState().docs[m.docId];
   if (onDevice && m.full && m.part === m.parts) {
     patchDoc(m.docId, (d) => {
-      d.offline = { ...(d.offline || { at: Date.now(), chapters: 0 }), audio: m.key, audioAt: Date.now() };
+      d.offline = { ...(d.offline || { at: Date.now(), chapters: 0 }), audio: key, audioAt: Date.now() };
     });
   }
   setSettings({ provider: 'neural', neuralVoice: m.voice });

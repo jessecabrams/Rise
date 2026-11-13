@@ -86,10 +86,17 @@ function voiceChain(): Voice[] {
   return [main, backup].filter(Boolean) as Voice[];
 }
 
+/**
+ * The label saved audio is filed under. Natural voice audio saved between Oct 24 and 27 was silent, and some
+ * devices still hold it under the old label, so the Natural voice now files under a new label and never
+ * reads the old one.
+ */
+export const vk = (v: { provider: string; voice: string; style: string }) => `${v.provider === 'neural' ? 'neural4' : v.provider}|${v.voice}|${v.style}`;
+
 /** Identifies the current voice's saved audio, or null for device voices. */
 export function voiceKey(): string | null {
   const v = cloudVoice();
-  return v ? `${v.provider}|${v.voice}|${v.style}` : null;
+  return v ? `${vk(v)}` : null;
 }
 
 /** Can audio for the current voice be downloaded right now? */
@@ -168,7 +175,7 @@ function silentClip(): StoredClip {
 }
 
 function fetchClip(text: string, persist = false, v: Voice = cloudVoice()!, pri = 0): Promise<Clip> {
-  const key = `${v.provider}|${v.voice}|${v.style}|${text}`;
+  const key = `${vk(v)}|${text}`;
   const hit = clips.get(key);
   if (hit) return hit;
   const p = (async (): Promise<Clip> => {
@@ -182,6 +189,7 @@ function fetchClip(text: string, persist = false, v: Voice = cloudVoice()!, pri 
     } catch {
       stored = undefined;
     }
+    if (stored) crumb('audio from saved copy');
     if (stored) return { url: URL.createObjectURL(new Blob([stored.bytes], { type: stored.mime })), starts: stored.starts };
     const made = await (v.provider === 'neural' ? naturalClip(text, v, pri) : cloudClip(text, v)).catch((e: any) => {
       if (/sent no audio/i.test(e?.message || '')) return silentClip();
@@ -224,7 +232,7 @@ async function urgentClip(text: string, v: Voice): Promise<Clip> {
 
 /** Races the cloud against this computer for one sentence; the faster one wins and is kept. */
 function withCloud(text: string, v: Voice): Promise<Clip> {
-  const key = `${v.provider}|${v.voice}|${v.style}|${text}`;
+  const key = `${vk(v)}|${text}`;
   const local = clips.get(key) || fetchClip(text, false, v, 1);
   if (ready.has(key)) return local;
   const fromCloud = cloudClip(text, v).then(async (made) => {
@@ -246,7 +254,7 @@ function withCloud(text: string, v: Voice): Promise<Clip> {
 
 /** Saved audio for one sentence, for building audio packs. */
 export async function clipBytes(text: string, v: Voice = cloudVoice()!, pri = 1): Promise<StoredClip> {
-  const key = `${v.provider}|${v.voice}|${v.style}|${text}`;
+  const key = `${vk(v)}|${text}`;
   try {
     const s = await idbGet<StoredClip>(key, clipStore());
     if (s) return s;
@@ -276,6 +284,14 @@ export { naturalVoice };
 export type { StoredClip, Voice };
 
 /* ---------- player ---------- */
+let statusSent = false;
+/** Once per launch, after the first sentence plays, send the step notes so sound problems can be traced. */
+function statusOnce() {
+  if (statusSent) return;
+  statusSent = true;
+  setTimeout(() => reportProblem('status: first sentence played'), 4000);
+}
+
 // A tiny silent sound, used to unlock audio on iPhone during the tap on play.
 const SILENCE = 'data:audio/mpeg;base64,//NAxAAAAANIAAAAAExBTUUDAAkIAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/80LEAAAAA0gAAAAATEFNRQMACQgABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/80DEAAAAA0gAAAAATEFNRQMACQgABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/zQsQAAAADSAAAAABMQU1FAwAJCAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/zQMQAAAADSAAAAABMQU1FAwAJCAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//NCxAAAAANIAAAAAExBTUUDAAkIAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 let unlockedSpeech = false;
@@ -483,7 +499,7 @@ class Player {
           await sleep(700);
           if (tok !== this.token) return;
           try {
-            clips.delete(`${v.provider}|${v.voice}|${v.style}|${this.sentences[i]}`);
+            clips.delete(`${vk(v)}|${this.sentences[i]}`);
             clip = await urgentClip(this.sentences[i], v);
             used = v;
             break;
@@ -546,7 +562,8 @@ class Player {
       if (tok === this.token) this.set({ playing: false, loading: false, error: 'Tap play to start audio.' });
       return;
     }
-    crumb(`playing ${i}`);
+    crumb(`playing ${i} vol ${a.volume} muted ${a.muted} len ${Math.round((a.duration || 0) * 10) / 10}s`);
+    statusOnce();
     this.set({ loading: false });
     // Keep several sentences ready ahead of the one playing, so there are no gaps.
     const ahead = used.provider === 'neural' ? 8 : 3;
