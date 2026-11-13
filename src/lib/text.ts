@@ -29,6 +29,10 @@ export interface Structured {
 export function normalize(text: string): string {
   return text
     .replace(/\r\n?/g, '\n')
+    // Backslashes come from Markdown-style files: a "\\" at the end of a line means "line break", and "\\." or
+    // "\\-" protect punctuation. None of them should be read aloud.
+    .replace(/\\+\n/g, '\n')
+    .replace(/\\+/g, '')
     .replace(/ /g, ' ')
     .replace(/[ \t]+/g, ' ')
     .replace(/ *\n */g, '\n')
